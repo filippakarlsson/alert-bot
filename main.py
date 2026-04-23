@@ -54,111 +54,141 @@ def _trigger_score(current: int, baseline: float, multiplier: float, min_baselin
 
 def _build_fetchers(config):
     recency_suffix = config.google_news_recency_query
-    google_news_se = GoogleNewsFetcher(
-        limit=config.reddit_limit,
-        timeout_seconds=config.reddit_timeout_seconds,
-        hl=config.google_news_hl,
-        gl=config.google_news_gl,
-        ceid=config.google_news_ceid,
-        query_suffix=recency_suffix,
-    )
-    google_news_se.source_name = "google_news_se"
+    fetchers = []
 
-    google_news_global = GoogleNewsFetcher(
-        limit=config.reddit_limit,
-        timeout_seconds=config.reddit_timeout_seconds,
-        hl="en-US",
-        gl="US",
-        ceid="US:en",
-        query_suffix=recency_suffix,
-    )
-    google_news_global.source_name = "google_news_global"
+    if config.enable_source_google_se:
+        google_news_se = GoogleNewsFetcher(
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+            hl=config.google_news_hl,
+            gl=config.google_news_gl,
+            ceid=config.google_news_ceid,
+            query_suffix=recency_suffix,
+        )
+        google_news_se.source_name = "google_news_se"
+        fetchers.append(google_news_se)
 
-    fetchers = [
-        google_news_se,
-        google_news_global,
-        RSSFetcher(
-            source_name="bbc_entertainment",
-            feed_url="https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml",
+    if config.enable_source_google_global:
+        google_news_global = GoogleNewsFetcher(
             limit=config.reddit_limit,
             timeout_seconds=config.reddit_timeout_seconds,
-        ),
-        RSSFetcher(
-            source_name="npr_music",
-            feed_url="https://feeds.npr.org/1039/rss.xml",
-            limit=config.reddit_limit,
-            timeout_seconds=config.reddit_timeout_seconds,
-        ),
-        RSSFetcher(
-            source_name="ap_entertainment",
-            feed_url="https://apnews.com/hub/entertainment?output=rss",
-            limit=config.reddit_limit,
-            timeout_seconds=config.reddit_timeout_seconds,
-        ),
-        RSSFetcher(
-            source_name="variety",
-            feed_url="https://variety.com/feed/",
-            limit=config.reddit_limit,
-            timeout_seconds=config.reddit_timeout_seconds,
-        ),
-        RSSFetcher(
-            source_name="billboard",
-            feed_url="https://www.billboard.com/feed/",
-            limit=config.reddit_limit,
-            timeout_seconds=config.reddit_timeout_seconds,
-        ),
-        RSSFetcher(
-            source_name="the_verge",
-            feed_url="https://www.theverge.com/rss/index.xml",
-            limit=config.reddit_limit,
-            timeout_seconds=config.reddit_timeout_seconds,
-        ),
-        GoogleNewsFetcher(
+            hl="en-US",
+            gl="US",
+            ceid="US:en",
+            query_suffix=recency_suffix,
+        )
+        google_news_global.source_name = "google_news_global"
+        fetchers.append(google_news_global)
+
+    if config.enable_source_bbc:
+        fetchers.append(
+            RSSFetcher(
+                source_name="bbc_entertainment",
+                feed_url="https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml",
+                limit=config.reddit_limit,
+                timeout_seconds=config.reddit_timeout_seconds,
+            )
+        )
+    if config.enable_source_npr:
+        fetchers.append(
+            RSSFetcher(
+                source_name="npr_music",
+                feed_url="https://feeds.npr.org/1039/rss.xml",
+                limit=config.reddit_limit,
+                timeout_seconds=config.reddit_timeout_seconds,
+            )
+        )
+    if config.enable_source_ap:
+        fetchers.append(
+            RSSFetcher(
+                source_name="ap_entertainment",
+                feed_url="https://apnews.com/hub/entertainment?output=rss",
+                limit=config.reddit_limit,
+                timeout_seconds=config.reddit_timeout_seconds,
+            )
+        )
+    if config.enable_source_variety:
+        fetchers.append(
+            RSSFetcher(
+                source_name="variety",
+                feed_url="https://variety.com/feed/",
+                limit=config.reddit_limit,
+                timeout_seconds=config.reddit_timeout_seconds,
+            )
+        )
+    if config.enable_source_billboard:
+        fetchers.append(
+            RSSFetcher(
+                source_name="billboard",
+                feed_url="https://www.billboard.com/feed/",
+                limit=config.reddit_limit,
+                timeout_seconds=config.reddit_timeout_seconds,
+            )
+        )
+    if config.enable_source_the_verge:
+        fetchers.append(
+            RSSFetcher(
+                source_name="the_verge",
+                feed_url="https://www.theverge.com/rss/index.xml",
+                limit=config.reddit_limit,
+                timeout_seconds=config.reddit_timeout_seconds,
+            )
+        )
+    if config.enable_source_aftonbladet:
+        aftonbladet = GoogleNewsFetcher(
             limit=config.reddit_limit,
             timeout_seconds=config.reddit_timeout_seconds,
             hl="sv-SE",
             gl="SE",
             ceid="SE:sv",
             query_suffix=f"site:aftonbladet.se nöje {recency_suffix}".strip(),
-        ),
-        GoogleNewsFetcher(
+        )
+        aftonbladet.source_name = "aftonbladet_noje"
+        fetchers.append(aftonbladet)
+    if config.enable_source_expressen:
+        expressen = GoogleNewsFetcher(
             limit=config.reddit_limit,
             timeout_seconds=config.reddit_timeout_seconds,
             hl="sv-SE",
             gl="SE",
             ceid="SE:sv",
             query_suffix=f"site:expressen.se nöje {recency_suffix}".strip(),
-        ),
-        GoogleNewsFetcher(
+        )
+        expressen.source_name = "expressen_noje"
+        fetchers.append(expressen)
+    if config.enable_source_hant:
+        hant = GoogleNewsFetcher(
             limit=config.reddit_limit,
             timeout_seconds=config.reddit_timeout_seconds,
             hl="sv-SE",
             gl="SE",
             ceid="SE:sv",
             query_suffix=f"site:hant.se {recency_suffix}".strip(),
-        ),
-        GoogleNewsFetcher(
+        )
+        hant.source_name = "hant"
+        fetchers.append(hant)
+    if config.enable_source_svt:
+        svt = GoogleNewsFetcher(
             limit=config.reddit_limit,
             timeout_seconds=config.reddit_timeout_seconds,
             hl="sv-SE",
             gl="SE",
             ceid="SE:sv",
             query_suffix=f"site:svt.se tv serie underhållning {recency_suffix}".strip(),
-        ),
-        GoogleNewsFetcher(
+        )
+        svt.source_name = "svt_noje"
+        fetchers.append(svt)
+    if config.enable_source_tv4:
+        tv4 = GoogleNewsFetcher(
             limit=config.reddit_limit,
             timeout_seconds=config.reddit_timeout_seconds,
             hl="sv-SE",
             gl="SE",
             ceid="SE:sv",
             query_suffix=f"site:tv4.se nöje tv program {recency_suffix}".strip(),
-        ),
-    ]
-    fetchers[-5].source_name = "aftonbladet_noje"
-    fetchers[-4].source_name = "expressen_noje"
-    fetchers[-3].source_name = "hant"
-    fetchers[-2].source_name = "svt_noje"
-    fetchers[-1].source_name = "tv4_noje"
+        )
+        tv4.source_name = "tv4_noje"
+        fetchers.append(tv4)
     if config.reddit_enabled:
         fetchers.insert(
             0,
@@ -424,6 +454,7 @@ def update_snapshot(storage: Storage, config) -> None:
                 "daily_series_bucket_seconds": config.daily_series_bucket_seconds,
                 "daily_series_window_seconds": config.daily_series_window_seconds,
                 "alert_count_offset": config.alert_count_offset,
+                "blocked_terms": config.blocked_terms,
             },
         )
     except Exception as exc:
@@ -464,6 +495,7 @@ def main() -> None:
                     "daily_series_bucket_seconds": config.daily_series_bucket_seconds,
                     "daily_series_window_seconds": config.daily_series_window_seconds,
                     "alert_count_offset": config.alert_count_offset,
+                    "blocked_terms": config.blocked_terms,
                 },
             )
             dashboard.start()

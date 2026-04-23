@@ -68,13 +68,27 @@ class Config:
     google_news_ceid: str
     google_news_recency_query: str
     max_item_age_hours: int
+    enable_source_google_se: bool
+    enable_source_google_global: bool
+    enable_source_bbc: bool
+    enable_source_npr: bool
+    enable_source_ap: bool
+    enable_source_variety: bool
+    enable_source_billboard: bool
+    enable_source_the_verge: bool
+    enable_source_aftonbladet: bool
+    enable_source_expressen: bool
+    enable_source_hant: bool
+    enable_source_svt: bool
+    enable_source_tv4: bool
     db_path: str
 
 
 def load_config() -> Config:
     _load_dotenv()
+    topics_raw = os.getenv("TRENDBOT_TOPICS_ACTIVE", "").strip()
     topics = _csv_env(
-        "TRENDBOT_TOPICS",
+        "TRENDBOT_TOPICS_ACTIVE" if topics_raw else "TRENDBOT_TOPICS",
         "pop culture,music,politics,news,movies,tv,celebrity,K-pop,Eurovision,TikTok,influencer,streamers,youtube,memes,viral trends,internet culture,creator economy,viral video,gaming,podcasts,streaming,fashion,sports",
     )
     return Config(
@@ -121,5 +135,18 @@ def load_config() -> Config:
         google_news_ceid=os.getenv("GOOGLE_NEWS_CEID", "US:en").strip(),
         google_news_recency_query=os.getenv("GOOGLE_NEWS_RECENCY_QUERY", "when:2d").strip(),
         max_item_age_hours=int(os.getenv("MAX_ITEM_AGE_HOURS", "72")),
+        enable_source_google_se=_bool_env("ENABLE_SOURCE_GOOGLE_SE", "true"),
+        enable_source_google_global=_bool_env("ENABLE_SOURCE_GOOGLE_GLOBAL", "true"),
+        enable_source_bbc=_bool_env("ENABLE_SOURCE_BBC", "true"),
+        enable_source_npr=_bool_env("ENABLE_SOURCE_NPR", "true"),
+        enable_source_ap=_bool_env("ENABLE_SOURCE_AP", "true"),
+        enable_source_variety=_bool_env("ENABLE_SOURCE_VARIETY", "true"),
+        enable_source_billboard=_bool_env("ENABLE_SOURCE_BILLBOARD", "true"),
+        enable_source_the_verge=_bool_env("ENABLE_SOURCE_THE_VERGE", "true"),
+        enable_source_aftonbladet=_bool_env("ENABLE_SOURCE_AFTONBLADET", "true"),
+        enable_source_expressen=_bool_env("ENABLE_SOURCE_EXPRESSEN", "true"),
+        enable_source_hant=_bool_env("ENABLE_SOURCE_HANT", "true"),
+        enable_source_svt=_bool_env("ENABLE_SOURCE_SVT", "true"),
+        enable_source_tv4=_bool_env("ENABLE_SOURCE_TV4", "true"),
         db_path=os.getenv("TRENDBOT_DB_PATH", "trendbot.sqlite3"),
     )

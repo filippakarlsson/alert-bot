@@ -162,10 +162,26 @@ def _topic_reaction(topic: str, example_title: str) -> dict[str, Any]:
 def _summary_payload(storage: Storage, settings: dict[str, Any]) -> dict[str, Any]:
     from datetime import datetime, timezone
 
+    blocked_terms = [str(t).strip().lower() for t in (settings.get("blocked_terms") or []) if str(t).strip()]
+
+    def _is_blocked(*values: str) -> bool:
+        if not blocked_terms:
+            return False
+        text = " ".join((value or "") for value in values).lower()
+        return any(term in text for term in blocked_terms)
+
     now = int(datetime.now(tz=timezone.utc).timestamp())
     min_daily_mentions = int(settings.get("daily_top_min_mentions", 3))
-    top_topic_candidates = storage.top_topics_since(now - 86400, 50, min_total_mentions=min_daily_mentions)
-    hot_topics = storage.top_topics_since(now - 3600, 10, min_total_mentions=1)
+    top_topic_candidates = [
+        row
+        for row in storage.top_topics_since(now - 86400, 80, min_total_mentions=min_daily_mentions)
+        if not _is_blocked(row.topic, row.cluster_label, row.example_title)
+    ]
+    hot_topics = [
+        row
+        for row in storage.top_topics_since(now - 3600, 40, min_total_mentions=1)
+        if not _is_blocked(row.topic, row.cluster_label, row.example_title)
+    ][:10]
     sticky_key = "dashboard:sticky_top10:v1"
     previous_raw = storage.get_state(sticky_key)
     previous_keys: list[str] = []
@@ -193,7 +209,11 @@ def _summary_payload(storage: Storage, settings: dict[str, Any]) -> dict[str, An
     )[:10]
     storage.set_state(sticky_key, json.dumps([item.cluster_key for item in top_topics]))
     top_categories = storage.top_categories_since(now - 86400, 8)
-    top_clusters = storage.top_clusters_since(now - 86400, 10)
+    top_clusters = [
+        row
+        for row in storage.top_clusters_since(now - 86400, 30)
+        if not _is_blocked(row.cluster_label, row.example_title)
+    ][:10]
     featured_topic = top_topics[0].topic if top_topics else ""
     featured_cluster = top_clusters[0].cluster_key if top_clusters else ""
     category_multipliers = {
