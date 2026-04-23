@@ -1,0 +1,6 @@
+.env
+trendbot.log
+trendbot.sqlite3
+__pycache__/
+*.pyc
+.DS_Store
