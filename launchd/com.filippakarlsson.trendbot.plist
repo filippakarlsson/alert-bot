@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.filippakarlsson.trendbot</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/filippakarlsson/Library/Application Support/TrendBot/runtime/main.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/filippakarlsson/Library/Application Support/TrendBot/runtime</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+    <key>DASHBOARD_SNAPSHOT_PATH</key>
+    <string>/Users/filippakarlsson/Library/Application Support/TrendBot/runtime/trendbot-dashboard.html</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/filippakarlsson/Library/Application Support/TrendBot/runtime/trendbot.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/filippakarlsson/Library/Application Support/TrendBot/runtime/trendbot.launchd.log</string>
+</dict>
+</plist>

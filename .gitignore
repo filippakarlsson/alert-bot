@@ -1,6 +1,9 @@
 .env
 trendbot.log
+trendbot.launchd.log
 trendbot.sqlite3
 __pycache__/
 *.pyc
 .DS_Store
+trendbot-dashboard.html
+trendbot-dashboard-v2.html

@@ -6,12 +6,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from statistics import mean
 
-from trendbot.analyzer import Alert, analyze_topic
+from trendbot.analyzer import Alert, analyze_topic, score_trend
+from trendbot.categories import categorize_topic
 from trendbot.config import load_config
-from trendbot.fetchers import GoogleNewsFetcher, RedditFetcher
+from trendbot.dashboard import DashboardServer, write_snapshot_file
+from trendbot.fetchers import GoogleNewsFetcher, RSSFetcher, RedditFetcher
 from trendbot.notifier import DiscordNotifier
-from trendbot.storage import Observation, Storage
-from trendbot.trends import extract_trend_signal
+from trendbot.storage import Observation, Storage, TopicRollup
+from trendbot.trends import choose_alert_topic, extract_trend_signal, normalize_cluster_key
 
 
 def log(message: str) -> None:
@@ -50,22 +52,113 @@ def _trigger_score(current: int, baseline: float, multiplier: float, min_baselin
     return current / threshold, threshold
 
 
-def poll_once() -> int:
-    config = load_config()
-    if not config.topics:
-        raise SystemExit("Set TRENDBOT_TOPICS to at least one topic.")
-    reddit_topics = config.topics[: max(0, config.reddit_topic_limit)]
+def _build_fetchers(config):
+    recency_suffix = config.google_news_recency_query
+    google_news_se = GoogleNewsFetcher(
+        limit=config.reddit_limit,
+        timeout_seconds=config.reddit_timeout_seconds,
+        hl=config.google_news_hl,
+        gl=config.google_news_gl,
+        ceid=config.google_news_ceid,
+        query_suffix=recency_suffix,
+    )
+    google_news_se.source_name = "google_news_se"
 
-    storage = Storage(config.db_path)
+    google_news_global = GoogleNewsFetcher(
+        limit=config.reddit_limit,
+        timeout_seconds=config.reddit_timeout_seconds,
+        hl="en-US",
+        gl="US",
+        ceid="US:en",
+        query_suffix=recency_suffix,
+    )
+    google_news_global.source_name = "google_news_global"
+
     fetchers = [
+        google_news_se,
+        google_news_global,
+        RSSFetcher(
+            source_name="bbc_entertainment",
+            feed_url="https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml",
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+        ),
+        RSSFetcher(
+            source_name="npr_music",
+            feed_url="https://feeds.npr.org/1039/rss.xml",
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+        ),
+        RSSFetcher(
+            source_name="ap_entertainment",
+            feed_url="https://apnews.com/hub/entertainment?output=rss",
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+        ),
+        RSSFetcher(
+            source_name="variety",
+            feed_url="https://variety.com/feed/",
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+        ),
+        RSSFetcher(
+            source_name="billboard",
+            feed_url="https://www.billboard.com/feed/",
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+        ),
+        RSSFetcher(
+            source_name="the_verge",
+            feed_url="https://www.theverge.com/rss/index.xml",
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+        ),
         GoogleNewsFetcher(
             limit=config.reddit_limit,
             timeout_seconds=config.reddit_timeout_seconds,
-            hl=config.google_news_hl,
-            gl=config.google_news_gl,
-            ceid=config.google_news_ceid,
+            hl="sv-SE",
+            gl="SE",
+            ceid="SE:sv",
+            query_suffix=f"site:aftonbladet.se nöje {recency_suffix}".strip(),
+        ),
+        GoogleNewsFetcher(
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+            hl="sv-SE",
+            gl="SE",
+            ceid="SE:sv",
+            query_suffix=f"site:expressen.se nöje {recency_suffix}".strip(),
+        ),
+        GoogleNewsFetcher(
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+            hl="sv-SE",
+            gl="SE",
+            ceid="SE:sv",
+            query_suffix=f"site:hant.se {recency_suffix}".strip(),
+        ),
+        GoogleNewsFetcher(
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+            hl="sv-SE",
+            gl="SE",
+            ceid="SE:sv",
+            query_suffix=f"site:svt.se tv serie underhållning {recency_suffix}".strip(),
+        ),
+        GoogleNewsFetcher(
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+            hl="sv-SE",
+            gl="SE",
+            ceid="SE:sv",
+            query_suffix=f"site:tv4.se nöje tv program {recency_suffix}".strip(),
         ),
     ]
+    fetchers[-5].source_name = "aftonbladet_noje"
+    fetchers[-4].source_name = "expressen_noje"
+    fetchers[-3].source_name = "hant"
+    fetchers[-2].source_name = "svt_noje"
+    fetchers[-1].source_name = "tv4_noje"
     if config.reddit_enabled:
         fetchers.insert(
             0,
@@ -75,6 +168,17 @@ def poll_once() -> int:
                 subreddits=config.reddit_subreddits,
             ),
         )
+    return fetchers
+
+
+def poll_once(config=None, storage=None) -> int:
+    config = config or load_config()
+    if not config.topics:
+        raise SystemExit("Set TRENDBOT_TOPICS to at least one topic.")
+    reddit_topics = config.topics[: max(0, config.reddit_topic_limit)]
+
+    storage = storage or Storage(config.db_path)
+    fetchers = _build_fetchers(config)
 
     notifier = None
     if config.discord_webhook_url:
@@ -82,12 +186,14 @@ def poll_once() -> int:
 
     alerts_sent = 0
     now = int(time.time())
+    oldest_allowed = now - (max(1, config.max_item_age_hours) * 3600)
     closest_candidate: ClosestCandidate | None = None
 
     for topic in config.topics:
         topic_spike_multiplier, topic_min_baseline = _topic_thresholds(topic, config)
         new_posts_by_source: dict[str, list] = {}
         triggering_alerts: list[Alert] = []
+        baselines_by_source: list[float] = []
         for fetcher in fetchers:
             if fetcher.source_name == "reddit" and topic not in reddit_topics:
                 continue
@@ -101,6 +207,8 @@ def poll_once() -> int:
 
             new_posts = []
             for post in posts:
+                if post.created_utc and post.created_utc < oldest_allowed:
+                    continue
                 if _contains_blocked_term(f"{post.title} {post.url}", config.blocked_terms):
                     continue
                 if not storage.has_seen_item(fetcher.source_name, topic, post.id):
@@ -115,6 +223,7 @@ def poll_once() -> int:
                 source=fetcher.source_name,
                 observed_at=now,
                 new_mentions=len(new_posts),
+                fetched_mentions=len(posts),
             )
             storage.add_observation(observation)
 
@@ -125,6 +234,7 @@ def poll_once() -> int:
             )
             previous_values = [obs.new_mentions for obs in history[:-1]]
             baseline = mean(previous_values[-config.window_size:]) if previous_values else 0.0
+            baselines_by_source.append(baseline)
             alert = analyze_topic(
                 topic=topic,
                 source=fetcher.source_name,
@@ -133,6 +243,8 @@ def poll_once() -> int:
                 spike_multiplier=topic_spike_multiplier,
                 min_baseline=topic_min_baseline,
             )
+            if alert and alert.ratio < config.alert_ratio_threshold:
+                alert = None
             score, threshold = _trigger_score(
                 current=len(new_posts),
                 baseline=baseline,
@@ -157,16 +269,82 @@ def poll_once() -> int:
             if alert:
                 triggering_alerts.append(alert)
 
-        if triggering_alerts and notifier:
+        combined_posts = []
+        for posts in new_posts_by_source.values():
+            combined_posts.extend(posts)
+        source_count = sum(1 for posts in new_posts_by_source.values() if posts)
+        cluster_signal = extract_trend_signal(combined_posts, config.blocked_terms, topic)
+        cluster_label = cluster_signal.label if cluster_signal else topic
+        cluster_key = normalize_cluster_key(cluster_label)
+        combined_mentions = sum(len(posts) for posts in new_posts_by_source.values())
+        combined_baseline = mean(baselines_by_source) if baselines_by_source else 0.0
+        signal_strength = float(cluster_signal.score) if cluster_signal else 0.0
+        rollup_score = score_trend(
+            current=combined_mentions,
+            baseline=combined_baseline,
+            source_count=source_count,
+            signal_strength=signal_strength,
+        )
+        storage.add_topic_rollup(
+            TopicRollup(
+                topic=topic,
+                observed_at=now,
+                total_mentions=combined_mentions,
+                source_count=source_count,
+                category=categorize_topic(topic),
+                cluster_key=cluster_key,
+                cluster_label=cluster_label,
+                trend_score=rollup_score,
+                example_title=cluster_signal.example_title if cluster_signal else "",
+            )
+        )
+
+        last_alert_key = f"last_alert_at:{topic}"
+        last_alert_at_raw = storage.get_state(last_alert_key)
+        last_alert_at = int(last_alert_at_raw) if last_alert_at_raw else 0
+        cooldown_elapsed = now - last_alert_at >= config.alert_cooldown_seconds
+        last_global_alert_at_raw = storage.get_state("last_alert_global_at")
+        last_global_alert_at = int(last_global_alert_at_raw) if last_global_alert_at_raw else 0
+        global_cooldown_elapsed = (
+            config.alert_global_cooldown_seconds <= 0
+            or now - last_global_alert_at >= config.alert_global_cooldown_seconds
+        )
+
+        if (
+            triggering_alerts
+            and notifier
+            and len(triggering_alerts) >= config.alert_min_sources
+            and cooldown_elapsed
+            and global_cooldown_elapsed
+        ):
             strongest_alert = max(
                 triggering_alerts,
                 key=lambda item: item.current / item.baseline if item.baseline else float("inf"),
             )
-            google_signal = extract_trend_signal(
-                new_posts_by_source.get("google_news", []),
+            google_global_signal = extract_trend_signal(
+                new_posts_by_source.get("google_news_global", []),
                 config.blocked_terms,
-                "google_news",
+                "google_news_global",
             )
+            google_se_signal = extract_trend_signal(
+                new_posts_by_source.get("google_news_se", []),
+                config.blocked_terms,
+                "google_news_se",
+            )
+            # Prefer global angle when available, fall back to Swedish and then combined.
+            if google_global_signal and google_global_signal.score >= 1:
+                google_signal = google_global_signal
+            elif google_se_signal and google_se_signal.score >= 1:
+                google_signal = google_se_signal
+            else:
+                google_posts = []
+                google_posts.extend(new_posts_by_source.get("google_news_global", []))
+                google_posts.extend(new_posts_by_source.get("google_news_se", []))
+                google_signal = extract_trend_signal(
+                    google_posts,
+                    config.blocked_terms,
+                    "google_news",
+                )
             reddit_signal = extract_trend_signal(
                 new_posts_by_source.get("reddit", []),
                 config.blocked_terms,
@@ -181,8 +359,15 @@ def poll_once() -> int:
                 for posts in new_posts_by_source.values():
                     combined_posts.extend(posts)
                 trend_signal = extract_trend_signal(combined_posts, config.blocked_terms, strongest_alert.source)
-            alert_topic = trend_signal.label if trend_signal else topic
-            alert_headline = trend_signal.example_title if trend_signal else ""
+            alert_topic, alert_headline = choose_alert_topic(trend_signal, topic)
+            semantic_key = f"last_alert_semantic_at:{normalize_cluster_key(alert_topic)}"
+            last_semantic_raw = storage.get_state(semantic_key)
+            last_semantic_at = int(last_semantic_raw) if last_semantic_raw else 0
+            semantic_cooldown_elapsed = now - last_semantic_at >= config.alert_cooldown_seconds
+            if not semantic_cooldown_elapsed:
+                if config.debug_mode:
+                    log(f"debug skipped duplicate semantic alert for {alert_topic!r}")
+                continue
             combined_source = " + ".join(sorted({item.source for item in triggering_alerts}))
             try:
                 notifier.send_alert(
@@ -193,8 +378,19 @@ def poll_once() -> int:
                         multiplier=strongest_alert.multiplier,
                         source=combined_source,
                         headline=alert_headline,
+                        source_count=source_count,
+                        cluster_label=cluster_label,
                     )
                 )
+                storage.add_alert_event(
+                    topic=alert_topic,
+                    source=combined_source,
+                    sent_at=now,
+                    trend_score=strongest_alert.trend_score,
+                )
+                storage.set_state(last_alert_key, str(now))
+                storage.set_state(semantic_key, str(now))
+                storage.set_state("last_alert_global_at", str(now))
                 alerts_sent += 1
                 log(f"discord alert sent for {alert_topic!r} [{combined_source}]")
             except Exception as exc:
@@ -214,23 +410,81 @@ def poll_once() -> int:
     return alerts_sent
 
 
+def update_snapshot(storage: Storage, config) -> None:
+    try:
+        write_snapshot_file(
+            storage,
+            config.dashboard_snapshot_path,
+            settings={
+                "window_size": config.window_size,
+                "spike_multiplier": config.spike_multiplier,
+                "min_baseline": config.min_baseline,
+                "pop_culture_spike_multiplier": config.pop_culture_spike_multiplier,
+                "pop_culture_min_baseline": config.pop_culture_min_baseline,
+                "daily_series_bucket_seconds": config.daily_series_bucket_seconds,
+                "daily_series_window_seconds": config.daily_series_window_seconds,
+                "alert_count_offset": config.alert_count_offset,
+            },
+        )
+    except Exception as exc:
+        log(f"dashboard snapshot failed: {exc}")
+
+
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "once":
         config = load_config()
-        alerts_sent = poll_once()
+        storage = Storage(config.db_path)
+        alerts_sent = poll_once(config=config, storage=storage)
+        update_snapshot(storage, config)
         if config.debug_mode:
             log(f"debug one-shot completed with {alerts_sent} alert(s)")
         return
 
     config = load_config()
+    storage = Storage(config.db_path)
     notifier = DiscordNotifier(config.discord_webhook_url, config.reddit_timeout_seconds) if config.discord_webhook_url else None
+    posts_notifier = None
+    if config.discord_posts_webhook_url:
+        posts_notifier = DiscordNotifier(config.discord_posts_webhook_url, config.reddit_timeout_seconds)
+    elif notifier:
+        posts_notifier = notifier
+    dashboard = None
+    if config.dashboard_enabled:
+        try:
+            dashboard = DashboardServer(
+                storage,
+                host=config.dashboard_host,
+                port=config.dashboard_port,
+                settings={
+                    "window_size": config.window_size,
+                    "spike_multiplier": config.spike_multiplier,
+                    "min_baseline": config.min_baseline,
+                    "pop_culture_spike_multiplier": config.pop_culture_spike_multiplier,
+                    "pop_culture_min_baseline": config.pop_culture_min_baseline,
+                    "daily_series_bucket_seconds": config.daily_series_bucket_seconds,
+                    "daily_series_window_seconds": config.daily_series_window_seconds,
+                    "alert_count_offset": config.alert_count_offset,
+                },
+            )
+            dashboard.start()
+            log(f"dashboard running at http://{config.dashboard_host}:{config.dashboard_port}")
+        except OSError as exc:
+            dashboard = None
+            log(
+                "dashboard disabled: "
+                f"could not bind {config.dashboard_host}:{config.dashboard_port} ({exc})"
+            )
+    update_snapshot(storage, config)
     last_heartbeat_at = int(time.time())
+    startup_now = int(time.time())
+    last_daily_digest_at = int(storage.get_state("last_daily_digest_at") or startup_now)
     log(
         "starting trendbot with "
         f"{len(config.topics)} topics, interval {config.poll_interval_seconds}s"
     )
     while True:
-        alerts_sent = poll_once()
+        alerts_sent = poll_once(config=config, storage=storage)
+        update_snapshot(storage, config)
         now = int(time.time())
         if notifier and now - last_heartbeat_at >= config.heartbeat_interval_seconds:
             try:
@@ -246,6 +500,32 @@ def main() -> None:
                 log("heartbeat sent")
             except Exception as exc:
                 log(f"heartbeat failed: {exc}")
+        if notifier and now - last_daily_digest_at >= config.daily_digest_interval_seconds:
+            top_topics = storage.top_topics_since(now - 86400, 10)
+            if top_topics:
+                lines = []
+                for idx, item in enumerate(top_topics, start=1):
+                    label = item.cluster_label or item.topic
+                    about = f" — about {item.example_title}" if getattr(item, "example_title", "") else ""
+                    lines.append(
+                        f"{idx}. {label} - {item.total_mentions} mentions ({item.samples} samples){about}"
+                    )
+                try:
+                    notifier.send_embed(
+                        content="TrendBot daily top 10",
+                        title="Daily Top 10",
+                        description="\n".join(lines),
+                        color=0xF59E0B,
+                        mention=False,
+                    )
+                    storage.set_state("last_daily_digest_at", str(now))
+                    last_daily_digest_at = now
+                    log("daily top 10 sent")
+                    if posts_notifier:
+                        posts_notifier.send_posts_ideas(top_topics[:5])
+                        log("daily #posts ideas sent")
+                except Exception as exc:
+                    log(f"daily top 10 failed: {exc}")
         time.sleep(config.poll_interval_seconds)
 
 

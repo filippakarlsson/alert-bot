@@ -28,21 +28,34 @@ def _load_dotenv(path: str = ".env") -> None:
         key, value = stripped.split("=", 1)
         key = key.strip()
         value = value.strip().strip("'").strip('"')
-        if key and key not in os.environ:
+        if key:
             os.environ[key] = value
 
 
 @dataclass(frozen=True)
 class Config:
     discord_webhook_url: str
+    discord_posts_webhook_url: str
     topics: List[str]
     blocked_terms: List[str]
     reddit_enabled: bool
     reddit_topic_limit: int
     reddit_subreddits: List[str]
+    alert_min_sources: int
+    alert_ratio_threshold: float
+    alert_cooldown_seconds: int
+    alert_global_cooldown_seconds: int
+    daily_digest_interval_seconds: int
+    dashboard_enabled: bool
+    dashboard_host: str
+    dashboard_port: int
+    dashboard_snapshot_path: str
     debug_mode: bool
     poll_interval_seconds: int
+    daily_series_bucket_seconds: int
+    daily_series_window_seconds: int
     heartbeat_interval_seconds: int
+    alert_count_offset: int
     window_size: int
     spike_multiplier: float
     min_baseline: int
@@ -53,6 +66,8 @@ class Config:
     google_news_hl: str
     google_news_gl: str
     google_news_ceid: str
+    google_news_recency_query: str
+    max_item_age_hours: int
     db_path: str
 
 
@@ -64,10 +79,14 @@ def load_config() -> Config:
     )
     return Config(
         discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
+        discord_posts_webhook_url=os.getenv("DISCORD_POSTS_WEBHOOK_URL", "").strip(),
         topics=topics,
         blocked_terms=_csv_env(
             "TRENDBOT_BLOCKED_TERMS",
-            "ai,openai,chatgpt,artificial intelligence,machine learning",
+            (
+                "ai,openai,chatgpt,artificial intelligence,machine learning,"
+                "nhl,nfl,nba,mlb,ncaa,super bowl,stanley cup,march madness"
+            ),
         ),
         reddit_enabled=_bool_env("REDDIT_ENABLED", "false"),
         reddit_topic_limit=int(os.getenv("REDDIT_TOPIC_LIMIT", "5")),
@@ -75,9 +94,21 @@ def load_config() -> Config:
             "TRENDBOT_REDDIT_SUBREDDITS",
             "popculturechat,popculture,entertainment,movies,tv,television,music,kpop,eurovision,tiktok,celebrity,streaming,streamers,youtube",
         ),
+        alert_min_sources=int(os.getenv("ALERT_MIN_SOURCES", "2")),
+        alert_ratio_threshold=float(os.getenv("ALERT_RATIO_THRESHOLD", "2.5")),
+        alert_cooldown_seconds=int(os.getenv("ALERT_COOLDOWN_SECONDS", "3600")),
+        alert_global_cooldown_seconds=int(os.getenv("ALERT_GLOBAL_COOLDOWN_SECONDS", "0")),
+        daily_digest_interval_seconds=int(os.getenv("DAILY_DIGEST_INTERVAL_SECONDS", "86400")),
+        dashboard_enabled=_bool_env("DASHBOARD_ENABLED", "false"),
+        dashboard_host=os.getenv("DASHBOARD_HOST", "0.0.0.0").strip(),
+        dashboard_port=int(os.getenv("DASHBOARD_PORT", "8000")),
+        dashboard_snapshot_path=os.getenv("DASHBOARD_SNAPSHOT_PATH", "trendbot-dashboard.html").strip(),
         debug_mode=_bool_env("DEBUG_MODE", "false"),
         poll_interval_seconds=int(os.getenv("POLL_INTERVAL_SECONDS", "300")),
+        daily_series_bucket_seconds=int(os.getenv("DAILY_SERIES_BUCKET_SECONDS", "180")),
+        daily_series_window_seconds=int(os.getenv("DAILY_SERIES_WINDOW_SECONDS", "21600")),
         heartbeat_interval_seconds=int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "3600")),
+        alert_count_offset=int(os.getenv("ALERT_COUNT_OFFSET", "0")),
         window_size=int(os.getenv("WINDOW_SIZE", "12")),
         spike_multiplier=float(os.getenv("SPIKE_MULTIPLIER", "2.5")),
         min_baseline=int(os.getenv("MIN_BASELINE", "2")),
@@ -88,5 +119,7 @@ def load_config() -> Config:
         google_news_hl=os.getenv("GOOGLE_NEWS_HL", "en-US").strip(),
         google_news_gl=os.getenv("GOOGLE_NEWS_GL", "US").strip(),
         google_news_ceid=os.getenv("GOOGLE_NEWS_CEID", "US:en").strip(),
+        google_news_recency_query=os.getenv("GOOGLE_NEWS_RECENCY_QUERY", "when:2d").strip(),
+        max_item_age_hours=int(os.getenv("MAX_ITEM_AGE_HOURS", "72")),
         db_path=os.getenv("TRENDBOT_DB_PATH", "trendbot.sqlite3"),
     )
