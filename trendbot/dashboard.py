@@ -992,12 +992,12 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
   <style>
     :root {
       color-scheme: light;
-      --bg: #f4efe9;
-      --panel: #fffaf4;
-      --muted: #4d443a;
-      --text: #17120f;
-      --line: #d3c2af;
-      --accent: #d4672f;
+      --bg: #ebe5de;
+      --panel: #f7f4f0;
+      --muted: #625b54;
+      --text: #171616;
+      --line: #ddd2c5;
+      --accent: #d54e1f;
     }
     body.theme-light {
       color-scheme: dark;
@@ -1011,7 +1011,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     body {
       margin: 0;
       font-family: "Avenir Next", "SF Pro Text", "SF Pro Display", "Manrope", Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: radial-gradient(circle at top, #f9f3ed 0, #f4efe9 55%);
+      background: var(--bg);
       color: var(--text);
     }
     body.theme-light {
@@ -1076,12 +1076,12 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
     .grid.wide { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
     .card {
-      background: rgba(255, 250, 244, 0.96);
-      border: 1px solid #e8dccf;
+      background: var(--panel);
+      border: 1px solid var(--line);
       border-radius: 18px;
       padding: 18px;
-      box-shadow: 0 10px 28px rgba(79, 49, 24, 0.08);
-      backdrop-filter: blur(8px);
+      box-shadow: none;
+      backdrop-filter: none;
     }
     body.theme-light .card {
       background: rgba(15, 23, 42, 0.82);
@@ -1094,17 +1094,18 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       display: inline-block;
       padding: 4px 10px;
       border-radius: 999px;
-      background: rgba(245, 158, 11, 0.12);
-      color: #fbbf24;
+      background: #f4e6d8;
+      color: #d56c34;
       font-size: 12px;
       margin-left: 8px;
+      font-weight: 800;
     }
     .muted { color: var(--muted); font-size: 13px; font-weight: 600; }
     .row { display: flex; justify-content: space-between; gap: 12px; }
     .topic {
       font-weight: 600;
     }
-    .score { color: #fbbf24; font-variant-numeric: tabular-nums; }
+    .score { color: #d56c34; font-variant-numeric: tabular-nums; font-weight: 800; }
     .source { color: #3b82f6; font-size: 12px; font-weight: 700; }
     .badge {
       display: inline-block;
@@ -1188,8 +1189,8 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       margin-bottom: 8px;
     }
     .control-select, .control-btn {
-      border: 1px solid #d9c9b7;
-      background: #fff8f2;
+      border: 1px solid var(--line);
+      background: #f7f2ec;
       color: #241a12;
       border-radius: 10px;
       padding: 8px 10px;
@@ -1344,8 +1345,8 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       margin-top: 8px;
     }
     .filter-btn {
-      border: 1px solid #d9c9b7;
-      background: #fff8f2;
+      border: 1px solid var(--line);
+      background: #f7f2ec;
       color: #241a12;
       border-radius: 999px;
       padding: 6px 10px;
@@ -1359,8 +1360,8 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       color: #e2e8f0;
     }
     .filter-btn.active {
-      border-color: rgba(245, 158, 11, 0.55);
-      color: #fbbf24;
+      border-color: #d56c34;
+      color: #d56c34;
     }
     .why-wrap {
       display: flex;
