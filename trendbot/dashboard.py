@@ -2527,6 +2527,9 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     settings: dict[str, Any]
 
     def do_GET(self) -> None:  # noqa: N802
+        if self.path.startswith("/api/health"):
+            self._send_json({"ok": True, "status": "healthy"})
+            return
         if self.path.startswith("/api/me"):
             session = self._session_info()
             role = (session or {}).get("role")
@@ -2610,6 +2613,9 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self._send_json({"ok": False, "error": "Not found"}, status=404)
 
     def do_HEAD(self) -> None:  # noqa: N802
+        if self.path.startswith("/api/health"):
+            self._send_headers("application/json; charset=utf-8", len(b'{"ok":true}'))
+            return
         if self.path.startswith("/api/") and not self.path.startswith("/api/me") and not self._is_authenticated():
             self._send_headers("application/json; charset=utf-8", 0, status=401)
             return
