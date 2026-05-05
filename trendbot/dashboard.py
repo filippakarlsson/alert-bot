@@ -1406,7 +1406,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     <p>Live overview of the strongest topics and the latest observations.</p>
   </header>
   <main id="dashboard-page">
-    <section class="card">
+    <section class="card" data-min-role="start">
       <h2>Filters <span class="pill">live view</span></h2>
       <div class="filter-row">
         <button id="scope-sweden" class="filter-btn active" type="button">Sweden</button>
@@ -1460,7 +1460,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       </section>
     </div>
     <div class="grid wide">
-      <section class="card" data-min-role="pro">
+      <section class="card" data-min-role="start">
         <h2>Post AI <span class="pill">what to post now</span></h2>
         <div class="control-row">
           <input id="post-ai-question" class="control-select" type="text" placeholder="Fråga: vad ska jag posta just nu?" />
