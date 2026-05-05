@@ -1445,7 +1445,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         <h2>Category Movers <span class="pill">top categories</span></h2>
         <div id="categories"><div class="muted">Loading...</div></div>
       </section>
-      <section class="card" data-min-role="pro">
+      <section class="card" data-min-role="lite">
         <h2>Topic Clusters <span class="pill">clustered stories</span></h2>
         <ul id="clusters"><li class="muted">Loading...</li></ul>
       </section>
@@ -1453,7 +1453,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         <h2>Vad Folk Tycker <span class="pill">känsla per ämne</span></h2>
         <ul id="reactions"><li class="muted">Loading...</li></ul>
       </section>
-      <section class="card">
+      <section class="card" data-min-role="start">
         <h2>Watchlist <span class="pill">people/program</span></h2>
         <p class="muted">Spara ämnen du vill bevaka extra noga.</p>
         <div id="watchlist-items"><div class="muted">Ingen watchlist ännu.</div></div>
@@ -1530,7 +1530,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       <div id="topic-title" class="topic" style="font-size:22px; margin-top:8px;">No topic selected</div>
       <div class="why-wrap" id="topic-why"></div>
       <div class="filter-row">
-        <button id="watchlist-toggle" class="filter-btn" type="button">Lägg till i watchlist</button>
+        <button id="watchlist-toggle" class="filter-btn" data-min-role="start" type="button">Lägg till i watchlist</button>
       </div>
     </section>
     <div class="grid wide">
@@ -2726,7 +2726,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         role = str(session.get("role", "")).lower()
         if role in {"admin", "pro", "start"}:
             return role
-        return "start"
+        return "lite"
 
     def _post_ai_limit_for_role(self, role: str) -> int:
         if role == "admin":
