@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import html
+import hashlib
+import hmac
 import json
 import re
+import secrets
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +20,43 @@ from .categories import categorize_topic
 from .storage import Storage
 
 _MEDIA_CACHE: dict[str, tuple[int, dict[str, Any]]] = {}
+_BRIEF_CACHE: dict[str, tuple[int, dict[str, Any]]] = {}
+_SESSION_STORE: dict[str, dict[str, Any]] = {}
+SOURCE_SCOPE: dict[str, str] = {
+    "google_news_se": "sweden",
+    "aftonbladet_noje": "sweden",
+    "expressen_noje": "sweden",
+    "hant": "sweden",
+    "hant_extra": "sweden",
+    "svt_noje": "sweden",
+    "tv4_noje": "sweden",
+    "google_news_global": "global",
+    "bbc_entertainment": "global",
+    "npr_music": "global",
+    "ap_entertainment": "global",
+    "variety": "global",
+    "billboard": "global",
+    "the_verge": "global",
+    "people": "global",
+    "eonline": "global",
+    "tmz": "global",
+    "rolling_stone": "global",
+    "reddit": "global",
+    "tiktok_web": "global",
+}
+LEADING_NEWS_PHRASES = {"just nu", "senaste", "breaking", "live", "nu"}
+SOURCE_ONLY_LABELS = {
+    "tv4 nyheterna",
+    "tv4",
+    "svt nyheter",
+    "svt",
+    "aftonbladet",
+    "expressen",
+    "hant",
+    "hänt",
+    "google news",
+    "tiktok",
+}
 
 
 def _format_ts(value: int) -> str:
@@ -70,18 +110,43 @@ STRONG_REACTION_WORDS = {
 }
 
 
+def _strip_leading_news_phrase(text: str) -> str:
+    value = (text or "").strip()
+    if not value:
+        return ""
+    return re.sub(r"^(just nu|senaste|breaking|live|nu)\s*[:\-–—]?\s*", "", value, flags=re.IGNORECASE).strip()
+
+
+def _is_leading_news_phrase(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (text or "").lower().strip())
+    return normalized in LEADING_NEWS_PHRASES
+
+
+def _is_source_only_label(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (text or "").lower().strip())
+    return normalized in SOURCE_ONLY_LABELS
+
+
 def _clean_example_title(title: str) -> str:
     cleaned = (title or "").strip()
     if not cleaned:
         return ""
+    cleaned = _strip_leading_news_phrase(cleaned)
     if " - " in cleaned:
-        cleaned = cleaned.split(" - ", 1)[0].strip()
+        left, right = cleaned.split(" - ", 1)
+        left = _strip_leading_news_phrase(left)
+        left_norm = re.sub(r"\s+", " ", left.lower().strip())
+        if not left or left_norm in GENERIC_SERIES_LABELS:
+            cleaned = right.strip()
+        else:
+            cleaned = left.strip()
     if "|" in cleaned:
         cleaned = cleaned.split("|", 1)[0].strip()
     if ":" in cleaned:
         prefix, suffix = cleaned.split(":", 1)
         if len(prefix.strip()) <= 18 and suffix.strip():
             cleaned = suffix.strip()
+    cleaned = _strip_leading_news_phrase(cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
 
@@ -118,13 +183,23 @@ def _series_label(cluster_label: str, example_title: str) -> str:
     if (
         label
         and normalized not in GENERIC_SERIES_LABELS
-        and len(label.split()) >= 3
+        and len(label.split()) >= 2
         and not _looks_dateish(label)
         and not _is_genericish_label(label)
+        and not _is_leading_news_phrase(label)
+        and not _is_source_only_label(label)
     ):
         return label
     fallback = _clean_example_title(example_title)
-    if fallback and not _looks_dateish(fallback):
+    fallback_norm = " ".join(fallback.lower().split())
+    if (
+        fallback
+        and fallback_norm not in GENERIC_SERIES_LABELS
+        and not _looks_dateish(fallback)
+        and not _is_genericish_label(fallback)
+        and not _is_leading_news_phrase(fallback)
+        and not _is_source_only_label(fallback)
+    ):
         return fallback
     raw_example = (example_title or "").strip()
     if "|" in raw_example:
@@ -132,18 +207,91 @@ def _series_label(cluster_label: str, example_title: str) -> str:
     if " - " in raw_example:
         raw_example = raw_example.split(" - ", 1)[0].strip()
     raw_example = re.sub(r"\s+", " ", raw_example).strip()
-    if raw_example and len(raw_example.split()) >= 2 and not _looks_dateish(raw_example):
+    raw_norm = " ".join(raw_example.lower().split())
+    if (
+        raw_example
+        and len(raw_example.split()) >= 2
+        and raw_norm not in GENERIC_SERIES_LABELS
+        and not _looks_dateish(raw_example)
+        and not _is_genericish_label(raw_example)
+        and not _is_leading_news_phrase(raw_example)
+        and not _is_source_only_label(raw_example)
+    ):
         return raw_example
-    if label and not _looks_dateish(label):
+    if (
+        label
+        and not _looks_dateish(label)
+        and not _is_leading_news_phrase(label)
+        and not _is_source_only_label(label)
+    ):
         return label
-    return "Trending story"
+    return ""
 
 
-def _topic_reaction(topic: str, example_title: str) -> dict[str, Any]:
+def _is_context_label(text: str) -> bool:
+    value = (text or "").strip()
+    if not value:
+        return False
+    if _looks_dateish(value):
+        return False
+    if _is_genericish_label(value):
+        return False
+    if _is_leading_news_phrase(value):
+        return False
+    if _is_source_only_label(value):
+        return False
+    if " ".join(value.lower().split()) in GENERIC_SERIES_LABELS:
+        return False
+    return len(value.split()) >= 2
+
+
+def _is_vague_label(text: str) -> bool:
+    value = re.sub(r"\s+", " ", (text or "").lower().strip())
+    if not value:
+        return True
+    vague_phrases = {
+        "frågetecknen kvar",
+        "oklart läge",
+        "fortsatt oklart",
+        "mer detaljer väntas",
+        "utveckling pågår",
+        "rubrik saknar kontext",
+    }
+    if value in vague_phrases:
+        return True
+    return len(value.split()) <= 2 and any(word in value for word in ("kvar", "oklart", "pågår"))
+
+
+def _expand_with_example_context(label: str, example_title: str) -> str:
+    if not _is_vague_label(label):
+        return label
+    raw = (example_title or "").strip()
+    if not raw:
+        return label
+    parts = [part.strip() for part in re.split(r"\s[-–—]\s", raw) if part.strip()]
+    # Prefer the most descriptive non-source segment from the example title.
+    candidates = []
+    for part in parts:
+        cleaned = _strip_leading_news_phrase(part)
+        if _is_source_only_label(cleaned):
+            continue
+        if not _looks_dateish(cleaned):
+            candidates.append(cleaned)
+    for cand in candidates:
+        if len(cand.split()) >= 3:
+            return cand
+    for cand in candidates:
+        if len(cand.split()) >= 2:
+            return cand
+    return label
+
+
+def _topic_reaction(topic: str, example_title: str, total_mentions: int, source_count: int) -> dict[str, Any]:
     text = f"{topic} {example_title}".lower()
     positive = sum(1 for w in POSITIVE_REACTION_WORDS if w in text)
     negative = sum(1 for w in NEGATIVE_REACTION_WORDS if w in text)
     strong = sum(1 for w in STRONG_REACTION_WORDS if w in text)
+    punctuation_signal = text.count("!") + text.count("?")
     sentiment_score = max(-100, min(100, (positive - negative) * 18))
     if sentiment_score > 12:
         mood = "Mest positiv"
@@ -151,7 +299,10 @@ def _topic_reaction(topic: str, example_title: str) -> dict[str, Any]:
         mood = "Mest negativ"
     else:
         mood = "Blandad reaktion"
-    intensity = min(100, max(20, (strong * 22) + (negative * 8) + (positive * 6)))
+    volume_bonus = min(35, max(0, int(total_mentions) * 2))
+    source_bonus = min(20, max(0, int(source_count) * 4))
+    language_signal = (strong * 20) + (negative * 8) + (positive * 6) + (punctuation_signal * 3)
+    intensity = min(100, max(8, language_signal + volume_bonus + source_bonus))
     return {
         "mood": mood,
         "sentiment_score": sentiment_score,
@@ -159,7 +310,7 @@ def _topic_reaction(topic: str, example_title: str) -> dict[str, Any]:
     }
 
 
-def _summary_payload(storage: Storage, settings: dict[str, Any]) -> dict[str, Any]:
+def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: str | None = None) -> dict[str, Any]:
     from datetime import datetime, timezone
 
     blocked_terms = [str(t).strip().lower() for t in (settings.get("blocked_terms") or []) if str(t).strip()]
@@ -170,18 +321,39 @@ def _summary_payload(storage: Storage, settings: dict[str, Any]) -> dict[str, An
         text = " ".join((value or "") for value in values).lower()
         return any(term in text for term in blocked_terms)
 
+    def _is_swedish_story(*values: str) -> bool:
+        text = " ".join((value or "") for value in values).lower()
+        swedish_markers = (
+            "tv4", "svt", "aftonbladet", "expressen", "hänt", "hant", "nyheterna",
+            "sverige", "svensk", "uppsala", "stockholm", "göteborg", "malmö",
+            "mello", "melodifestivalen",
+        )
+        if any(marker in text for marker in swedish_markers):
+            return True
+        # Heuristic: Swedish chars usually indicate Swedish-local headline context.
+        return any(ch in text for ch in ("å", "ä", "ö"))
+
     now = int(datetime.now(tz=timezone.utc).timestamp())
     min_daily_mentions = int(settings.get("daily_top_min_mentions", 3))
     top_topic_candidates = [
         row
-        for row in storage.top_topics_since(now - 86400, 80, min_total_mentions=min_daily_mentions)
+        for row in storage.top_topics_since(now - 86400, 80, min_total_mentions=min_daily_mentions, market_scope=market_scope)
         if not _is_blocked(row.topic, row.cluster_label, row.example_title)
     ]
     hot_topics = [
         row
-        for row in storage.top_topics_since(now - 3600, 40, min_total_mentions=1)
+        for row in storage.top_topics_since(now - 3600, 40, min_total_mentions=1, market_scope=market_scope)
         if not _is_blocked(row.topic, row.cluster_label, row.example_title)
     ][:10]
+    if market_scope == "global":
+        top_topic_candidates = [
+            row for row in top_topic_candidates
+            if not _is_swedish_story(row.topic, row.cluster_label, row.example_title)
+        ]
+        hot_topics = [
+            row for row in hot_topics
+            if not _is_swedish_story(row.topic, row.cluster_label, row.example_title)
+        ]
     sticky_key = "dashboard:sticky_top10:v1"
     previous_raw = storage.get_state(sticky_key)
     previous_keys: list[str] = []
@@ -208,12 +380,17 @@ def _summary_payload(storage: Storage, settings: dict[str, Any]) -> dict[str, An
         reverse=True,
     )[:10]
     storage.set_state(sticky_key, json.dumps([item.cluster_key for item in top_topics]))
-    top_categories = storage.top_categories_since(now - 86400, 8)
+    top_categories = storage.top_categories_since(now - 86400, 8, market_scope=market_scope)
     top_clusters = [
         row
-        for row in storage.top_clusters_since(now - 86400, 30)
+        for row in storage.top_clusters_since(now - 86400, 30, market_scope=market_scope)
         if not _is_blocked(row.cluster_label, row.example_title)
     ][:10]
+    if market_scope == "global":
+        top_clusters = [
+            row for row in top_clusters
+            if not _is_swedish_story(row.cluster_label, row.example_title)
+        ]
     featured_topic = top_topics[0].topic if top_topics else ""
     featured_cluster = top_clusters[0].cluster_key if top_clusters else ""
     category_multipliers = {
@@ -283,10 +460,54 @@ def _summary_payload(storage: Storage, settings: dict[str, Any]) -> dict[str, An
             }
         )
     cluster_multi_series = cluster_multi_series_all[:5]
+
+    candidate_labels_by_cluster: dict[str, list[tuple[str, str]]] = {}
+    for row in list(top_topics) + list(hot_topics):
+        key = row.cluster_key or ""
+        if not key:
+            continue
+        candidates = candidate_labels_by_cluster.setdefault(key, [])
+        for cand in (
+            _series_label(row.cluster_label, row.example_title),
+            _clean_example_title(row.example_title),
+            _strip_leading_news_phrase(row.topic or ""),
+        ):
+            pair = (cand, row.example_title or "")
+            if cand and pair not in candidates:
+                candidates.append(pair)
+
+    def _best_cluster_label(cluster_key: str, fallback_label: str, fallback_example: str, fallback_topic: str = "") -> str:
+        base = _series_label(fallback_label, fallback_example)
+        if base:
+            expanded = _expand_with_example_context(base, fallback_example)
+            if _is_context_label(expanded) and not _is_vague_label(expanded):
+                return expanded
+        for cand, cand_example in candidate_labels_by_cluster.get(cluster_key or "", []):
+            if _is_context_label(cand):
+                expanded = _expand_with_example_context(cand, cand_example or fallback_example)
+                if _is_context_label(expanded) and not _is_vague_label(expanded):
+                    return expanded
+        topic_guess = _strip_leading_news_phrase(fallback_topic or "")
+        if _is_context_label(topic_guess):
+            expanded = _expand_with_example_context(topic_guess, fallback_example)
+            if _is_context_label(expanded) and not _is_vague_label(expanded):
+                return expanded
+        if _is_context_label(base):
+            return base
+        expanded_base = _expand_with_example_context(base or "", fallback_example)
+        if _is_context_label(expanded_base):
+            return expanded_base
+        # Last-resort fallback: clean something human-readable instead of generic placeholder text.
+        fallback = _clean_example_title(fallback_example) or _strip_leading_news_phrase(fallback_topic or "")
+        if not fallback:
+            fallback = re.sub(r"^cluster:\s*", "", cluster_key or "", flags=re.IGNORECASE).replace("_", " ").strip()
+        fallback = re.sub(r"\s+", " ", fallback).strip(" -–—:")
+        return fallback or "Oklart ämne"
+
     return {
         "top_topics": [
             {
-                "topic": _series_label(row.cluster_label, row.example_title),
+                "topic": _best_cluster_label(row.cluster_key, row.cluster_label, row.example_title, row.topic),
                 "cluster_key": row.cluster_key,
                 "example_title": row.example_title,
                 "total_mentions": row.total_mentions,
@@ -297,13 +518,13 @@ def _summary_payload(storage: Storage, settings: dict[str, Any]) -> dict[str, An
                 "category": row.category,
                 "cluster_label": row.cluster_label,
                 "source_count": row.source_count,
-                "link": f"https://news.google.com/search?q={quote_plus(_series_label(row.cluster_label, row.example_title))}",
+                "link": f"https://news.google.com/search?q={quote_plus(_best_cluster_label(row.cluster_key, row.cluster_label, row.example_title, row.topic))}",
             }
             for row in top_topics
         ],
         "hot_topics": [
             {
-                "topic": _series_label(row.cluster_label, row.example_title),
+                "topic": _best_cluster_label(row.cluster_key, row.cluster_label, row.example_title, row.topic),
                 "cluster_key": row.cluster_key,
                 "example_title": row.example_title,
                 "total_mentions": row.total_mentions,
@@ -314,17 +535,22 @@ def _summary_payload(storage: Storage, settings: dict[str, Any]) -> dict[str, An
                 "category": row.category,
                 "cluster_label": row.cluster_label,
                 "source_count": row.source_count,
-                "link": f"https://news.google.com/search?q={quote_plus(_series_label(row.cluster_label, row.example_title))}",
+                "link": f"https://news.google.com/search?q={quote_plus(_best_cluster_label(row.cluster_key, row.cluster_label, row.example_title, row.topic))}",
             }
             for row in hot_topics
         ],
         "reaction_topics": [
             {
                 "topic": row.topic,
-                "display_topic": _series_label(row.cluster_label, row.example_title),
+                "display_topic": _best_cluster_label(row.cluster_key, row.cluster_label, row.example_title, row.topic),
                 "category": row.category,
                 "example_title": row.example_title,
-                **_topic_reaction(_series_label(row.cluster_label, row.example_title), row.example_title),
+                **_topic_reaction(
+                    _best_cluster_label(row.cluster_key, row.cluster_label, row.example_title, row.topic),
+                    row.example_title,
+                    row.total_mentions,
+                    row.source_count,
+                ),
             }
             for row in top_topics[:8]
         ],
@@ -342,7 +568,7 @@ def _summary_payload(storage: Storage, settings: dict[str, Any]) -> dict[str, An
         "top_clusters": [
             {
                 "cluster_key": row.cluster_key,
-                "cluster_label": _series_label(row.cluster_label, row.example_title),
+                "cluster_label": _best_cluster_label(row.cluster_key, row.cluster_label, row.example_title),
                 "category": row.category,
                 "total_mentions": row.total_mentions,
                 "samples": row.samples,
@@ -354,7 +580,7 @@ def _summary_payload(storage: Storage, settings: dict[str, Any]) -> dict[str, An
             for row in top_clusters
         ],
         "featured_label": (
-            _series_label(top_clusters[0].cluster_label, top_clusters[0].example_title)
+            _best_cluster_label(top_clusters[0].cluster_key, top_clusters[0].cluster_label, top_clusters[0].example_title)
             if top_clusters
             else (featured_topic or "No featured topic yet.")
         ),
@@ -367,7 +593,11 @@ def _summary_payload(storage: Storage, settings: dict[str, Any]) -> dict[str, An
             }
             for point in featured_series
         ],
-        "cluster_label": _series_label(top_clusters[0].cluster_label, top_clusters[0].example_title) if top_clusters else "No cluster yet.",
+        "cluster_label": (
+            _best_cluster_label(top_clusters[0].cluster_key, top_clusters[0].cluster_label, top_clusters[0].example_title)
+            if top_clusters
+            else "No cluster yet."
+        ),
         "cluster_series": [
             {
                 "bucket_ts": point.bucket_ts,
@@ -390,11 +620,14 @@ def _summary_payload(storage: Storage, settings: dict[str, Any]) -> dict[str, An
             "live_alerts_24h": live_alerts_24h,
             "live_alerts_7d": live_alerts_7d,
         },
+        "market_scope": market_scope or "all",
     }
 
 
-def _recent_payload(storage: Storage) -> dict[str, Any]:
+def _recent_payload(storage: Storage, market_scope: str | None = None) -> dict[str, Any]:
     items = storage.recent_observations_global(20)
+    if market_scope in {"sweden", "global"}:
+        items = [item for item in items if SOURCE_SCOPE.get(item.source, "global") == market_scope]
     payload = []
     total_new = 0
     total_fetched = 0
@@ -579,6 +812,175 @@ def _media_payload(topic: str) -> dict[str, Any]:
     return payload
 
 
+def _clean_source_tail(text: str) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return ""
+    cleaned = re.sub(
+        r"\s[-–—]\s(?:Aftonbladet|Expressen|SVT(?: Nyheter)?|TV4(?: Nyheterna)?|Omni|Reuters|AP News|BBC|People\.com|Billboard|Variety|The Verge|Yahoo|Fox \d+|[A-ZÅÄÖ]{2,6}|[A-Za-z0-9.-]+\.(?:se|com|org|net))$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned
+
+
+def _first_sentence(text: str) -> str:
+    value = _strip_html(text or "")
+    value = re.sub(r"\s+", " ", value).strip()
+    if not value:
+        return ""
+    parts = re.split(r"(?<=[.!?])\s+", value)
+    if not parts:
+        return value[:180]
+    return parts[0][:220].strip()
+
+
+def _infer_reason(texts: list[str]) -> str:
+    connectors = ["efter", "när", "sedan", "i samband med", "på grund av", "därför att"]
+    for text in texts:
+        low = text.lower()
+        for connector in connectors:
+            idx = low.find(f"{connector} ")
+            if idx >= 0:
+                phrase = text[idx:].strip(" .,:;-")
+                if len(phrase) >= 16:
+                    return phrase[:170]
+    for text in texts:
+        low = text.lower()
+        if any(word in low for word in ["kritik", "anklag", "bråk", "konflikt", "avhopp", "avslöj", "polis", "utred"]):
+            return text[:170]
+    return ""
+
+
+def _ensure_period(text: str) -> str:
+    value = (text or "").strip()
+    if not value:
+        return ""
+    if value[-1] in ".!?":
+        return value
+    return value + "."
+
+
+def _event_from_headline(headline: str, topic: str) -> str:
+    clean = _clean_source_tail(headline)
+    if not clean:
+        return f"Nya uppgifter har kommit om {topic}"
+    parts = re.split(r"\s[–—-]\s", clean, maxsplit=1)
+    if len(parts) == 2:
+        left = _ensure_period(parts[0])
+        right = _ensure_period(parts[1][:1].upper() + parts[1][1:] if parts[1] else "")
+        if left and right:
+            return f"{left} {right}"
+    return _ensure_period(clean)
+
+
+def _impact_sentence(topic: str) -> str:
+    lower = (topic or "").lower()
+    if any(word in lower for word in ["tv", "reality", "förrädarna", "paradise", "ex on the beach", "love island", "idol", "lets dance"]):
+        return "Det som avgör fortsättningen nu är om kanalen eller deltagarna bekräftar fler detaljer i nästa uppdatering."
+    if any(word in lower for word in ["tiktok", "influencer", "youtub", "streamer", "internet"]):
+        return "Nästa steg blir att se om fler profiler kommenterar och om uppgifterna får officiell bekräftelse."
+    return "Nästa steg är att följa nästa bekräftade besked från huvudpersonerna eller ansvarig kanal."
+
+
+def _topic_brief_payload(topic: str) -> dict[str, Any]:
+    clean_topic = unquote_plus((topic or "").strip())
+    cache_key = clean_topic.lower()
+    now = int(time.time())
+    cached = _BRIEF_CACHE.get(cache_key)
+    if cached and (now - cached[0]) < 600:
+        return cached[1]
+
+    rows = _google_news_media(clean_topic, limit=8)
+    titles = [_clean_source_tail((row.get("title") or "").strip()) for row in rows if (row.get("title") or "").strip()]
+    summaries = [_first_sentence(row.get("summary") or "") for row in rows]
+    titles = [t for t in titles if t]
+    summaries = [s for s in summaries if s]
+
+    headline = titles[0] if titles else f"Nya uppgifter om {clean_topic}"
+    event_sentence = _event_from_headline(headline, clean_topic)
+    reason_phrase = _infer_reason(summaries + titles)
+    if reason_phrase:
+        reason_sentence = _ensure_period(f"Det som uppges just nu är {reason_phrase}")
+    elif summaries:
+        reason_sentence = _ensure_period(f"Det som framgår i första rapporteringen är: {summaries[0].rstrip('.')}")
+    else:
+        reason_sentence = "Det finns ännu ingen tydlig bekräftad orsak i öppna källor."
+
+    follow_up = _impact_sentence(clean_topic)
+    article = f"{event_sentence} {reason_sentence} {follow_up}"
+
+    payload = {
+        "topic": clean_topic,
+        "headline": headline,
+        "reason": reason_sentence,
+        "article": article[:520],
+        "sample_titles": titles[:3],
+    }
+    _BRIEF_CACHE[cache_key] = (now, payload)
+    return payload
+
+
+def _post_ai_payload(storage: Storage, settings: dict[str, Any], question: str, market_scope: str | None = None) -> dict[str, Any]:
+    summary = _summary_payload(storage, settings, market_scope)
+    top_topics = summary.get("top_topics") or []
+    hot_topics = summary.get("hot_topics") or []
+    candidates = []
+    seen = set()
+    for item in top_topics + hot_topics:
+        topic = (item.get("topic") or "").strip()
+        if not topic:
+            continue
+        key = topic.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(item)
+        if len(candidates) >= 5:
+            break
+
+    if not candidates:
+        return {
+            "answer": "Jag hittar inga tydliga live-trender just nu. Vänta en cykel och fråga igen om 2-3 minuter.",
+            "ideas": [],
+        }
+
+    lead = candidates[0]
+    lead_topic = lead.get("topic") or "ett ämne"
+    lead_title = _clean_source_tail((lead.get("example_title") or "").strip()) or lead_topic
+    q = (question or "").strip()
+    focus = "kort video"
+    q_lower = q.lower()
+    if any(w in q_lower for w in ["caption", "text"]):
+        focus = "caption"
+    elif any(w in q_lower for w in ["hook", "öppning"]):
+        focus = "hook"
+    elif any(w in q_lower for w in ["script", "manus"]):
+        focus = "manus"
+
+    ideas = []
+    for item in candidates[:3]:
+        topic = item.get("topic") or "okänt ämne"
+        title = _clean_source_tail((item.get("example_title") or "").strip()) or topic
+        ideas.append(
+            {
+                "topic": topic,
+                "angle": f"Säg vad som hänt i en mening: {title}. Avsluta med en tydlig take eller fråga.",
+                "hook": f"Snabb update om {topic}: det här är vad som faktiskt hänt.",
+                "cta": f"Vad tycker ni om {topic}?",
+            }
+        )
+
+    answer = (
+        f"Bästa att posta just nu är {focus} om \"{lead_topic}\". "
+        f"Börja med fakta från rubriken \"{lead_title}\", håll det till 20-30 sekunder, "
+        f"och avsluta med en tydlig fråga för kommentarer."
+    )
+    return {"answer": answer, "ideas": ideas}
+
+
 def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     bootstrap_json = json.dumps(bootstrap_data or {})
     template = """<!doctype html>
@@ -597,11 +999,23 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       --line: #243244;
       --accent: #f59e0b;
     }
+    body.theme-light {
+      color-scheme: light;
+      --bg: #f8fafc;
+      --panel: #ffffff;
+      --muted: #475569;
+      --text: #0f172a;
+      --line: #cbd5e1;
+      --accent: #ea580c;
+    }
     body {
       margin: 0;
       font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: radial-gradient(circle at top, #1e293b 0, #0f172a 55%);
       color: var(--text);
+    }
+    body.theme-light {
+      background: radial-gradient(circle at top, #e2e8f0 0, #f8fafc 55%);
     }
     header {
       padding: 20px 24px 12px;
@@ -633,6 +1047,16 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       color: #fbbf24;
       text-decoration: none;
     }
+    body.theme-light .nav-link {
+      background: #ffffff;
+      color: #0f172a;
+      border-color: #cbd5e1;
+    }
+    body.theme-light .nav-link.active,
+    body.theme-light .nav-link:hover {
+      border-color: #fb923c;
+      color: #c2410c;
+    }
     h1 { margin: 0; font-size: 28px; }
     p { color: var(--muted); margin: 8px 0 0; }
     main { padding: 0 24px 32px; display: grid; gap: 18px; }
@@ -645,6 +1069,11 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       padding: 18px;
       box-shadow: 0 20px 60px rgba(0,0,0,.25);
       backdrop-filter: blur(12px);
+    }
+    body.theme-light .card {
+      background: rgba(255, 255, 255, 0.94);
+      border: 1px solid #cbd5e1;
+      box-shadow: 0 12px 30px rgba(2, 6, 23, 0.08);
     }
     h2 { margin: 0 0 12px; font-size: 18px; }
     ol, ul { margin: 0; padding-left: 20px; }
@@ -754,6 +1183,12 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       padding: 8px 10px;
       font-size: 13px;
     }
+    body.theme-light .control-select, 
+    body.theme-light .control-btn {
+      background: #ffffff;
+      color: #0f172a;
+      border-color: #cbd5e1;
+    }
     .control-select {
       flex: 1;
       min-width: 0;
@@ -832,6 +1267,34 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       font-size: 11px;
       color: #93c5fd;
     }
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 6, 23, 0.82);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 16px;
+    }
+    .login-card {
+      width: min(420px, 100%);
+      background: rgba(15, 23, 42, 0.96);
+      border: 1px solid rgba(148, 163, 184, 0.24);
+      border-radius: 16px;
+      padding: 18px;
+    }
+    .login-input {
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 8px;
+      border: 1px solid rgba(148, 163, 184, 0.26);
+      background: rgba(15, 23, 42, 0.9);
+      color: #e2e8f0;
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 14px;
+    }
     .media-card {
       border: 1px solid rgba(148, 163, 184, 0.2);
       border-radius: 14px;
@@ -860,23 +1323,107 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       color: #fbbf24;
       text-decoration: none;
     }
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+    }
+    .filter-btn {
+      border: 1px solid rgba(148, 163, 184, 0.26);
+      background: rgba(15, 23, 42, 0.9);
+      color: #e2e8f0;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    body.theme-light .filter-btn {
+      background: #ffffff;
+      color: #0f172a;
+      border-color: #cbd5e1;
+    }
+    .filter-btn.active {
+      border-color: rgba(245, 158, 11, 0.55);
+      color: #fbbf24;
+    }
+    .why-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .why-chip {
+      font-size: 11px;
+      color: #fde68a;
+      background: rgba(245, 158, 11, 0.14);
+      border: 1px solid rgba(245, 158, 11, 0.28);
+      border-radius: 999px;
+      padding: 3px 8px;
+    }
+    .topic-page {
+      display: none;
+    }
+    .studio-box {
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 12px;
+      padding: 12px;
+      background: rgba(15, 23, 42, 0.62);
+      margin-top: 8px;
+    }
     a { color: #93c5fd; text-decoration: none; }
     a:hover { text-decoration: underline; }
     code { background: rgba(148,163,184,.12); padding: 2px 6px; border-radius: 6px; }
   </style>
 </head>
 <body>
+  <div id="login-overlay" class="login-overlay">
+    <div class="login-card">
+      <h2>Logga in</h2>
+      <p class="muted">Konto: <code>admin</code>, <code>start</code> eller <code>pro</code></p>
+      <input id="login-username" class="login-input" type="text" placeholder="username" />
+      <input id="login-password" class="login-input" type="password" placeholder="password" />
+      <div class="control-row" style="margin-top:10px;">
+        <button id="login-submit" class="control-btn" type="button">Logga in</button>
+        <span id="login-status" class="muted"></span>
+      </div>
+    </div>
+  </div>
   <header>
     <div class="topbar">
       <h1>TrendBot Dashboard</h1>
       <nav class="nav-links">
+        <span id="role-badge" class="pill" style="margin-right:6px;">role: start</span>
         <a id="nav-dashboard" class="nav-link" href="?">Dashboard</a>
-        <a id="nav-media" class="nav-link" href="?view=media">Bilder</a>
+        <a id="nav-topic" class="nav-link" href="?view=topic">Topic</a>
+        <a id="nav-media" class="nav-link" data-min-role="pro" href="?view=media">Bilder</a>
+        <button id="refresh-btn" class="control-btn" type="button">Uppdatera</button>
+        <button id="theme-toggle" class="control-btn" type="button" aria-label="toggle theme">Light mode</button>
+        <button id="logout-btn" class="control-btn" type="button">Logga ut</button>
       </nav>
     </div>
     <p>Live overview of the strongest topics and the latest observations.</p>
   </header>
   <main id="dashboard-page">
+    <section class="card">
+      <h2>Filters <span class="pill">live view</span></h2>
+      <div class="filter-row">
+        <button id="scope-sweden" class="filter-btn active" type="button">Sweden</button>
+        <button id="scope-global" class="filter-btn" data-min-role="pro" type="button">Global / America</button>
+      </div>
+      <div class="filter-row">
+        <button class="filter-btn active" data-filter="all" type="button">Allt</button>
+        <button class="filter-btn" data-filter="svenskt" type="button">Svenskt</button>
+        <button class="filter-btn" data-filter="drama" type="button">Drama</button>
+        <button class="filter-btn" data-filter="tv" type="button">TV</button>
+        <button class="filter-btn" data-filter="musik" type="button">Musik</button>
+      </div>
+      <div class="filter-row">
+        <button class="filter-btn" data-window="2" type="button">Senaste 2h</button>
+        <button class="filter-btn active" data-window="24" type="button">Senaste 24h</button>
+      </div>
+    </section>
     <div class="grid wide">
       <section class="card">
         <h2>Daily Top 10 <span class="pill">stable • last 24h</span></h2>
@@ -894,47 +1441,62 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         <h2>Hot Mentions <span class="pill">fast • last 60m</span></h2>
         <ol id="hot-topics"><li class="muted">Loading...</li></ol>
       </section>
-      <section class="card">
+      <section class="card" data-min-role="pro">
         <h2>Category Movers <span class="pill">top categories</span></h2>
         <div id="categories"><div class="muted">Loading...</div></div>
       </section>
-      <section class="card">
+      <section class="card" data-min-role="pro">
         <h2>Topic Clusters <span class="pill">clustered stories</span></h2>
         <ul id="clusters"><li class="muted">Loading...</li></ul>
       </section>
-      <section class="card">
+      <section class="card" data-min-role="pro">
         <h2>Vad Folk Tycker <span class="pill">känsla per ämne</span></h2>
         <ul id="reactions"><li class="muted">Loading...</li></ul>
       </section>
+      <section class="card">
+        <h2>Watchlist <span class="pill">people/program</span></h2>
+        <p class="muted">Spara ämnen du vill bevaka extra noga.</p>
+        <div id="watchlist-items"><div class="muted">Ingen watchlist ännu.</div></div>
+      </section>
     </div>
     <div class="grid wide">
-      <section class="card">
+      <section class="card" data-min-role="pro">
+        <h2>Post AI <span class="pill">what to post now</span></h2>
+        <div class="control-row">
+          <input id="post-ai-question" class="control-select" type="text" placeholder="Fråga: vad ska jag posta just nu?" />
+          <button id="post-ai-ask" class="control-btn" type="button">Fråga AI</button>
+        </div>
+        <div id="post-ai-answer" class="muted">Skriv en fråga och klicka på Fråga AI.</div>
+      </section>
+    </div>
+    <div class="grid wide">
+      <section class="card" data-min-role="pro">
         <h2>Trend Graphs</h2>
         <div class="chart" id="featured-chart"></div>
         <p class="muted" id="featured-label">Loading...</p>
       </section>
-      <section class="card">
+      <section class="card" data-min-role="admin">
         <h2>Backtest Snapshot</h2>
         <div id="backtest"><div class="muted">Loading...</div></div>
       </section>
     </div>
     <div class="grid wide">
-      <section class="card">
+      <section class="card" data-min-role="pro">
         <h2>Recent Observations</h2>
         <p class="muted" id="recent-status">Loading...</p>
         <ul id="recent"><li class="muted">Loading...</li></ul>
       </section>
-      <section class="card">
+      <section class="card" data-min-role="pro">
         <h2>Daily Series</h2>
         <div class="chart" id="cluster-chart"></div>
         <p class="muted" id="cluster-label">Loading...</p>
       </section>
     </div>
-    <section class="card">
+    <section class="card" data-min-role="pro">
       <h2>Tips</h2>
       <p class="muted">Open the Discord alerts for sharper context, or use the JSON endpoints at <code>/api/summary</code> and <code>/api/recent</code>.</p>
     </section>
-    <section class="card">
+    <section class="card" data-min-role="pro">
       <h2>What The Numbers Mean</h2>
       <div class="metric">
         <div><strong>Trend score</strong><div class="muted">A 0-100 score. Higher means hotter. It mixes mentions, baseline, source agreement, and cluster strength.</div></div>
@@ -956,6 +1518,44 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         <div><strong>Chart</strong><div class="muted">Time on the x-axis, mentions on the y-axis.</div></div>
         <div class="score">trend</div>
       </div>
+    </section>
+  </main>
+  <main id="topic-page" class="topic-page">
+    <section class="card">
+      <div class="row" style="align-items:center;">
+        <h2 style="margin:0;">Topic Detail</h2>
+        <a class="control-btn" href="?">Tillbaka till dashboard</a>
+      </div>
+      <p class="muted" id="topic-subtitle">Välj en trend från listan.</p>
+      <div id="topic-title" class="topic" style="font-size:22px; margin-top:8px;">No topic selected</div>
+      <div class="why-wrap" id="topic-why"></div>
+      <div class="filter-row">
+        <button id="watchlist-toggle" class="filter-btn" type="button">Lägg till i watchlist</button>
+      </div>
+    </section>
+    <div class="grid wide">
+      <section class="card">
+        <h2>Tidslinje</h2>
+        <div class="chart" id="topic-chart"></div>
+      </section>
+      <section class="card">
+        <h2>Källor</h2>
+        <ul id="topic-sources"><li class="muted">No topic selected</li></ul>
+      </section>
+    </div>
+    <div class="grid wide">
+      <section class="card">
+        <h2>Känsla</h2>
+        <div id="topic-sentiment" class="muted">No topic selected</div>
+      </section>
+      <section class="card">
+        <h2>Post Studio</h2>
+        <div id="post-studio" class="muted">No topic selected</div>
+      </section>
+    </div>
+    <section class="card">
+      <h2>Media</h2>
+      <div id="topic-media-links" class="chip-wrap"></div>
     </section>
   </main>
   <main id="media-page" class="media-page">
@@ -1213,12 +1813,153 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     let top10ShowAll = false;
     let top10SelectedKey = '';
     let lastSummary = null;
+    let lastRecent = null;
+    let marketScope = 'sweden';
+    let userRole = 'start';
+    const ROLE_RANK = { start: 1, pro: 2, admin: 3 };
+    let activeFilter = 'all';
+    let activeWindowHours = 24;
+    let currentTopicKey = '';
+    const WATCHLIST_KEY = 'trendbot_watchlist_v1';
+    const THEME_KEY = 'trendbot_theme_v1';
+    function nowUtcSeconds() {
+      return Math.floor(Date.now() / 1000);
+    }
+    function topicText(item) {
+      return `${item.topic || ''} ${item.example_title || ''} ${item.category || ''}`.toLowerCase();
+    }
+    function matchesFilter(item) {
+      if (!item) return false;
+      const text = topicText(item);
+      if (activeFilter === 'svenskt') {
+        return ['svensk', 'sverige', 'melodifestivalen', 'tv4', 'svt', 'nöje'].some((x) => text.includes(x));
+      }
+      if (activeFilter === 'drama') {
+        return ['drama', 'skandal', 'bråk', 'chock', 'rasar', 'kritik', 'backlash', 'controversy'].some((x) => text.includes(x));
+      }
+      if (activeFilter === 'tv') {
+        return ['tv', 'serie', 'program', 'svt', 'tv4', 'idol', 'lets dance', 'masked singer'].some((x) => text.includes(x));
+      }
+      if (activeFilter === 'musik') {
+        return ['musik', 'music', 'song', 'album', 'k-pop', 'eurovision', 'melodifestivalen'].some((x) => text.includes(x));
+      }
+      return true;
+    }
+    function withinWindow(item) {
+      if (!item || !item.latest_observed_at) return true;
+      return item.latest_observed_at >= (nowUtcSeconds() - (activeWindowHours * 3600));
+    }
+    function filtered(items) {
+      return (items || []).filter((item) => matchesFilter(item) && withinWindow(item));
+    }
+    function applyScopeButtons() {
+      const se = document.getElementById('scope-sweden');
+      const gl = document.getElementById('scope-global');
+      if (!se || !gl) return;
+      se.classList.toggle('active', marketScope === 'sweden');
+      gl.classList.toggle('active', marketScope === 'global');
+    }
+    function applyTheme(theme) {
+      const isLight = theme === 'light';
+      document.body.classList.toggle('theme-light', isLight);
+      const btn = document.getElementById('theme-toggle');
+      if (btn) btn.textContent = isLight ? 'Dark mode' : 'Light mode';
+    }
+    function initTheme() {
+      let theme = 'dark';
+      try {
+        const saved = localStorage.getItem(THEME_KEY);
+        if (saved === 'light' || saved === 'dark') theme = saved;
+      } catch {}
+      applyTheme(theme);
+    }
+    function toggleTheme() {
+      const next = document.body.classList.contains('theme-light') ? 'dark' : 'light';
+      applyTheme(next);
+      try { localStorage.setItem(THEME_KEY, next); } catch {}
+    }
+    function applyRoleUI() {
+      const roleBadge = document.getElementById('role-badge');
+      if (roleBadge) roleBadge.textContent = `role: ${userRole}`;
+      document.querySelectorAll('[data-min-role]').forEach((el) => {
+        const required = (el.getAttribute('data-min-role') || 'start').toLowerCase();
+        const canSee = (ROLE_RANK[userRole] || 0) >= (ROLE_RANK[required] || 0);
+        el.style.display = canSee ? '' : 'none';
+      });
+      if (userRole === 'start' && marketScope === 'global') {
+        marketScope = 'sweden';
+        applyScopeButtons();
+      }
+    }
+    function whyTrendingChips(item) {
+      const chips = [];
+      chips.push(`${item.total_mentions || 0} mentions`);
+      chips.push(`${item.source_count || 0} sources`);
+      if ((item.trend_score || 0) >= 85) chips.push('high heat');
+      if ((item.latest_observed_at || 0) >= (nowUtcSeconds() - 7200)) chips.push('very fresh');
+      const t = topicText(item);
+      if (['drama', 'skandal', 'bråk', 'chock', 'backlash', 'controversy'].some((x) => t.includes(x))) chips.push('strong reactions');
+      return chips.slice(0, 4);
+    }
+    function chipsHtml(item) {
+      return `<div class="why-wrap">${whyTrendingChips(item).map((chip) => `<span class="why-chip">${escapeHtml(chip)}</span>`).join('')}</div>`;
+    }
+    function topicLink(item) {
+      return `?view=topic&key=${encodeURIComponent(item.cluster_key || '')}`;
+    }
+    function getWatchlist() {
+      try {
+        const raw = localStorage.getItem(WATCHLIST_KEY);
+        const data = raw ? JSON.parse(raw) : [];
+        return Array.isArray(data) ? data : [];
+      } catch {
+        return [];
+      }
+    }
+    function setWatchlist(items) {
+      try {
+        localStorage.setItem(WATCHLIST_KEY, JSON.stringify(items.slice(0, 25)));
+      } catch {}
+    }
+    function watchlistHas(key) {
+      return getWatchlist().some((x) => x.key === key);
+    }
+    function renderWatchlist() {
+      const wrap = document.getElementById('watchlist-items');
+      const items = getWatchlist();
+      if (!items.length) {
+        wrap.innerHTML = '<div class="muted">Ingen watchlist ännu.</div>';
+        return;
+      }
+      wrap.innerHTML = `<div class="chip-wrap">${items.map((item) => `<a class="chip" href="?view=topic&key=${encodeURIComponent(item.key)}">${escapeHtml(item.topic)}</a>`).join('')}</div>`;
+    }
+    function toggleWatchlistCurrent() {
+      if (!lastSummary || !currentTopicKey) return;
+      const all = [...(lastSummary.top_topics || []), ...(lastSummary.hot_topics || [])];
+      const current = all.find((x) => x.cluster_key === currentTopicKey);
+      if (!current) return;
+      const list = getWatchlist();
+      const idx = list.findIndex((x) => x.key === currentTopicKey);
+      if (idx >= 0) {
+        list.splice(idx, 1);
+      } else {
+        list.unshift({ key: currentTopicKey, topic: current.topic, category: current.category || 'default' });
+      }
+      setWatchlist(list);
+      renderWatchlist();
+      updateWatchlistButton();
+    }
+    function updateWatchlistButton() {
+      const btn = document.getElementById('watchlist-toggle');
+      if (!btn) return;
+      btn.textContent = watchlistHas(currentTopicKey) ? 'Ta bort från watchlist' : 'Lägg till i watchlist';
+    }
     function renderTop10(summary) {
       const selectEl = document.getElementById('top10-select');
       const moreBtn = document.getElementById('top10-more');
       const focusEl = document.getElementById('top10-focus');
       const listEl = document.getElementById('top10');
-      const allItems = summary.top_topics || [];
+      const allItems = filtered(summary.top_topics || []);
 
       if (!allItems.length) {
         selectEl.innerHTML = '<option>No topics yet</option>';
@@ -1258,9 +1999,13 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
               <span class="topic">${item.topic}</span>
               <span class="source">${item.category}</span>
             </div>
-            <div class="score">${item.trend_score.toFixed(1)}</div>
+            <div class="row" style="align-items:center;">
+              <a class="secondary-btn" href="${topicLink(item)}">Open topic</a>
+              <div class="score">${item.trend_score.toFixed(1)}</div>
+            </div>
           </div>
           <div class="muted">${item.total_mentions} mentions across ${item.samples} samples • ${item.source_count} sources • latest ${item.latest_observed_at_human}</div>
+          ${chipsHtml(item)}
           <div class="muted">Cluster: ${escapeHtml(item.cluster_label || item.topic)}</div>
           <div class="muted">Trend score: ${item.trend_score.toFixed(1)} / 100</div>
           ${item.example_title ? `<div class="muted">About: ${escapeHtml(item.example_title)}</div>` : ''}
@@ -1280,24 +2025,173 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         renderTop10(lastSummary);
       }
     });
-    async function loadData() {
-      let summary;
-      let recent;
-      if (BOOTSTRAP_DATA.summary && BOOTSTRAP_DATA.recent) {
-        summary = BOOTSTRAP_DATA.summary;
-        recent = BOOTSTRAP_DATA.recent;
-      } else {
-        const [summaryRes, recentRes] = await Promise.all([
-          fetch('/api/summary'),
-          fetch('/api/recent'),
-        ]);
-        summary = await summaryRes.json();
-        recent = await recentRes.json();
+    document.getElementById('watchlist-toggle').addEventListener('click', () => {
+      toggleWatchlistCurrent();
+    });
+    document.getElementById('scope-sweden').addEventListener('click', async () => {
+      marketScope = 'sweden';
+      applyScopeButtons();
+      await loadData();
+    });
+    document.getElementById('scope-global').addEventListener('click', async () => {
+      if ((ROLE_RANK[userRole] || 0) < (ROLE_RANK.pro || 1)) {
+        marketScope = 'sweden';
+        applyScopeButtons();
+        return;
       }
+      marketScope = 'global';
+      applyScopeButtons();
+      await loadData();
+    });
+    for (const btn of document.querySelectorAll('[data-filter]')) {
+      btn.addEventListener('click', () => {
+        activeFilter = btn.getAttribute('data-filter') || 'all';
+        for (const other of document.querySelectorAll('[data-filter]')) other.classList.remove('active');
+        btn.classList.add('active');
+        if (lastSummary) loadData();
+      });
+    }
+    for (const btn of document.querySelectorAll('[data-window]')) {
+      btn.addEventListener('click', () => {
+        activeWindowHours = Number(btn.getAttribute('data-window') || '24');
+        for (const other of document.querySelectorAll('[data-window]')) other.classList.remove('active');
+        btn.classList.add('active');
+        if (lastSummary) loadData();
+      });
+    }
+    function bestPublishTime(item) {
+      const cat = (item.category || '').toLowerCase();
+      if (cat.includes('music')) return '19:30 CEST';
+      if (cat.includes('internet')) return '20:30 CEST';
+      if (cat.includes('pop')) return '19:00 CEST';
+      return '18:30 CEST';
+    }
+    function postStudioHtml(item) {
+      const topic = item.topic || 'Det här';
+      const ex = item.example_title || '';
+      const cat = (item.category || '').toLowerCase();
+      const sourceTail = /\s[-–—]\s(?:Aftonbladet|Expressen|SVT(?: Nyheter)?|TV4(?: Nyheterna)?|Omni|Reuters|AP News|BBC|People\.com|Billboard|Variety|The Verge|Yahoo|Fox \d+|[A-Za-z0-9.-]+\.(?:se|com|org|net))$/i;
+      const cleanedExample = ex.replace(sourceTail, '').trim();
+      const hookOptions = [
+        `POV: du missade helt vad som hände kring ${topic}`,
+        `${topic}: min ärliga take på 30 sek`,
+        `Okej, vi måste prata om ${topic}`,
+        `Snabb förklaring: vad som faktiskt hänt kring ${topic}`,
+      ];
+      if (cat.includes('music')) hookOptions.unshift(`${topic} - varför alla snackar om detta i musik just nu`);
+      if (cat.includes('tv')) hookOptions.unshift(`${topic} - det här betyder det för programmet/serien`);
+      const hook = hookOptions[Math.abs(topic.length + ex.length) % hookOptions.length];
+      const caption = cleanedExample
+        ? `${cleanedExample}. Vad tänker ni om det här?`
+        : `Det här har fått mycket uppmärksamhet idag. Vad tänker ni?`;
+      const cta = 'Vilken take har du? Skriv i kommentarerna.';
+      const timing = bestPublishTime(item);
+      const fallbackArticle = cleanedExample
+        ? `${cleanedExample}. I praktiken betyder det att läget i ${topic.toLowerCase()} redan har ändrats och att nästa beslut nu ligger hos de personer som nämns i nyheten. Om du vill fatta det snabbt: håll koll på nästa officiella besked och om bytet eller konflikten bekräftas i fler oberoende rapporter under dagen.`
+        : `${topic} har fått nya uppgifter som redan påverkar hur läget ser ut just nu. Det viktigaste för snabb överblick är att se vad som är bekräftat, vem som faktiskt uttalat sig och om nästa uppdatering ändrar bilden ytterligare.`;
+      return `
+        <div class="studio-box"><strong>Hook</strong><div class="muted">${escapeHtml(hook)}</div></div>
+        <div class="studio-box"><strong>Caption</strong><div class="muted">${escapeHtml(caption)}</div></div>
+        <div class="studio-box"><strong>CTA</strong><div class="muted">${escapeHtml(cta)}</div></div>
+        <div class="studio-box"><strong>Bästa posttid</strong><div class="muted">${timing}</div></div>
+        <div class="studio-box"><strong>Exempelartikel (~60 ord)</strong><div id="post-article-text" class="muted">${escapeHtml(fallbackArticle)}</div></div>
+      `;
+    }
 
-      renderTop10(summary);
+    async function fetchApiJson(path) {
+      const candidates = [path];
+      if (window.location.protocol === 'file:' || window.location.hostname === 'localhost') {
+        candidates.push(`http://127.0.0.1:8000${path}`);
+      }
+      let lastErr = null;
+      for (const url of candidates) {
+        try {
+          const res = await fetch(url, { credentials: 'include' });
+          if (!res.ok) throw new Error(`${res.status} ${res.statusText}`.trim());
+          return await res.json();
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      throw lastErr || new Error('Load failed');
+    }
 
-      document.getElementById('hot-topics').innerHTML = summary.hot_topics.map((item) => `
+    async function loadTopicBrief(item) {
+      const target = document.getElementById('post-article-text');
+      if (!target || !item || !item.topic) return;
+      const topicKey = (item.cluster_key || item.topic || '').toString();
+      target.setAttribute('data-topic-key', topicKey);
+      try {
+        const payload = await fetchApiJson(`/api/brief?topic=${encodeURIComponent(item.topic)}`);
+        if (target.getAttribute('data-topic-key') !== topicKey) return;
+        const text = (payload && payload.article) ? payload.article : '';
+        if (text) target.textContent = text;
+      } catch (_err) {
+        // Keep fallback article text if brief fetch fails.
+      }
+    }
+    function renderTopicPage(summary) {
+      const params = new URLSearchParams(window.location.search || '');
+      const key = (params.get('key') || currentTopicKey || '').trim();
+      const all = filtered([...(summary.top_topics || []), ...(summary.hot_topics || [])]);
+      const uniq = all.filter((item, idx, arr) => arr.findIndex((x) => x.cluster_key === item.cluster_key) === idx);
+      const selected = uniq.find((x) => x.cluster_key === key) || uniq[0];
+      if (!selected) {
+        document.getElementById('topic-title').textContent = 'No topic selected';
+        return;
+      }
+      currentTopicKey = selected.cluster_key;
+      document.getElementById('topic-title').textContent = selected.topic;
+      document.getElementById('topic-subtitle').textContent = selected.example_title || 'Topic detail';
+      document.getElementById('topic-why').innerHTML = whyTrendingChips(selected).map((chip) => `<span class="why-chip">${escapeHtml(chip)}</span>`).join('');
+
+      const series = (summary.cluster_multi_series_all || []).find((x) => x.cluster_key === selected.cluster_key);
+      document.getElementById('topic-chart').innerHTML = lineChart(series ? (series.series || []) : [], colorFor(selected.category));
+
+      const recentItems = (lastRecent && lastRecent.items) ? lastRecent.items : [];
+      const sourceRows = recentItems
+        .filter((r) => topicText({ topic: selected.topic, example_title: selected.example_title }).includes((r.topic || '').toLowerCase()) || (r.topic || '').toLowerCase().includes(selected.topic.toLowerCase().split(' ')[0]))
+        .slice(0, 8);
+      document.getElementById('topic-sources').innerHTML = sourceRows.length
+        ? sourceRows.map((r) => `<li><span class="source">${escapeHtml(r.source)}</span> • <span class="muted">${escapeHtml(r.observed_at_human)}</span></li>`).join('')
+        : `<li class="muted">${selected.source_count} källor i signalen just nu.</li>`;
+
+      const reaction = (summary.reaction_topics || []).find((r) => (r.display_topic || r.topic) === selected.topic);
+      document.getElementById('topic-sentiment').innerHTML = reaction
+        ? `<div class="metric"><div><strong>${escapeHtml(reaction.mood)}</strong><div class="muted">Känsloscore ${reaction.sentiment_score} • Reaktionsstyrka ${reaction.intensity}/100</div></div><div class="score">${reaction.intensity}</div></div>`
+        : '<div class="muted">Ingen känslodata ännu.</div>';
+
+      document.getElementById('post-studio').innerHTML = postStudioHtml(selected);
+      loadTopicBrief(selected);
+      document.getElementById('topic-media-links').innerHTML = mediaSources(selected.topic).map((x) => `<a class="chip" href="${x.url}" target="_blank" rel="noreferrer">${escapeHtml(x.label)}</a>`).join('');
+      updateWatchlistButton();
+    }
+    async function loadData() {
+      try {
+        const scopeQuery = `?scope=${encodeURIComponent(marketScope)}`;
+        const [summary, recent] = await Promise.all([
+          fetchApiJson(`/api/summary${scopeQuery}`),
+          fetchApiJson(`/api/recent${scopeQuery}`),
+        ]);
+        const safeSummary = summary || {};
+        const safeRecent = recent || {};
+        safeSummary.top_topics = Array.isArray(safeSummary.top_topics) ? safeSummary.top_topics : [];
+        safeSummary.hot_topics = Array.isArray(safeSummary.hot_topics) ? safeSummary.hot_topics : [];
+        safeSummary.category_movers = Array.isArray(safeSummary.category_movers) ? safeSummary.category_movers : [];
+        safeSummary.top_clusters = Array.isArray(safeSummary.top_clusters) ? safeSummary.top_clusters : [];
+        safeSummary.reaction_topics = Array.isArray(safeSummary.reaction_topics) ? safeSummary.reaction_topics : [];
+        safeSummary.featured_series = Array.isArray(safeSummary.featured_series) ? safeSummary.featured_series : [];
+        safeSummary.cluster_multi_series = Array.isArray(safeSummary.cluster_multi_series) ? safeSummary.cluster_multi_series : [];
+        safeSummary.backtest = safeSummary.backtest || {};
+        safeRecent.items = Array.isArray(safeRecent.items) ? safeRecent.items : [];
+        safeRecent.total_new_mentions = Number(safeRecent.total_new_mentions || 0);
+        safeRecent.total_fetched_mentions = Number(safeRecent.total_fetched_mentions || 0);
+        lastRecent = safeRecent;
+
+      renderTop10(safeSummary);
+
+      const hotItems = filtered(safeSummary.hot_topics || []);
+      document.getElementById('hot-topics').innerHTML = hotItems.map((item) => `
         <li>
           <div class="row">
             <div>
@@ -1305,15 +2199,19 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
               <span class="topic">${item.topic}</span>
               <span class="source">${item.category}</span>
             </div>
-            <div class="score">${item.total_mentions}</div>
+            <div class="row" style="align-items:center;">
+              <a class="secondary-btn" href="${topicLink(item)}">Open topic</a>
+              <div class="score">${item.total_mentions}</div>
+            </div>
           </div>
           <div class="muted">${item.total_mentions} mentions • ${item.source_count} sources • latest ${item.latest_observed_at_human}</div>
+          ${chipsHtml(item)}
           ${item.example_title ? `<div class="muted">${escapeHtml(item.example_title)}</div>` : ''}
         </li>
       `).join('') || '<li class="muted">No hot mentions yet.</li>';
 
-      const maxCategory = Math.max(...summary.category_movers.map((item) => item.total_mentions || 0), 1);
-      document.getElementById('categories').innerHTML = summary.category_movers.map((item) => `
+      const maxCategory = Math.max(...safeSummary.category_movers.map((item) => item.total_mentions || 0), 1);
+      document.getElementById('categories').innerHTML = safeSummary.category_movers.map((item) => `
         <div class="metric">
           <div style="min-width: 110px;">
             <span class="badge" style="background:${colorFor(item.category)}"></span>
@@ -1327,7 +2225,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         </div>
       `).join('') || '<div class="muted">No category data yet.</div>';
 
-      document.getElementById('clusters').innerHTML = summary.top_clusters.map((item) => `
+      document.getElementById('clusters').innerHTML = safeSummary.top_clusters.map((item) => `
         <li>
           <div class="row">
             <div>
@@ -1341,7 +2239,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         </li>
       `).join('') || '<li class="muted">No clusters yet.</li>';
 
-      document.getElementById('reactions').innerHTML = (summary.reaction_topics || []).map((item) => {
+      document.getElementById('reactions').innerHTML = filtered(safeSummary.reaction_topics || []).map((item) => {
         const moodColor = item.sentiment_score > 10 ? '#22c55e' : (item.sentiment_score < -10 ? '#ef4444' : '#f59e0b');
         const topicLabel = item.display_topic || item.topic;
         return `
@@ -1360,30 +2258,41 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         `;
       }).join('') || '<li class="muted">No reaction data yet.</li>';
 
-      document.getElementById('featured-chart').innerHTML = lineChart(summary.featured_series, '#f59e0b');
-      document.getElementById('featured-label').textContent = summary.featured_label || 'No featured series yet.';
-      document.getElementById('cluster-chart').innerHTML = multiLineChart(summary.cluster_multi_series || []);
-      document.getElementById('cluster-label').textContent = (summary.cluster_multi_series && summary.cluster_multi_series.length)
+      document.getElementById('featured-chart').innerHTML = lineChart(safeSummary.featured_series, '#f59e0b');
+      document.getElementById('featured-label').textContent = safeSummary.featured_label || 'No featured series yet.';
+      document.getElementById('cluster-chart').innerHTML = multiLineChart(safeSummary.cluster_multi_series || []);
+      document.getElementById('cluster-label').textContent = (safeSummary.cluster_multi_series && safeSummary.cluster_multi_series.length)
         ? 'Top 5 clusters (last 6h, local time)'
-        : (summary.cluster_label || 'No cluster series yet.');
-      lastSummary = summary;
+        : (safeSummary.cluster_label || 'No cluster series yet.');
+      lastSummary = safeSummary;
 
+      const backtest = {
+        live_alerts_24h: Number(safeSummary.backtest.live_alerts_24h || 0),
+        live_alerts_7d: Number(safeSummary.backtest.live_alerts_7d || 0),
+        lookback_days: Number(safeSummary.backtest.lookback_days || 7),
+        simulated_alerts: Number(safeSummary.backtest.simulated_alerts || 0),
+        topics_tested: Number(safeSummary.backtest.topics_tested || 0),
+        alert_rate: Number(safeSummary.backtest.alert_rate || 0),
+        strongest_category: safeSummary.backtest.strongest_category || 'default',
+        strongest_topic: safeSummary.backtest.strongest_topic || '-',
+        strongest_score: Number(safeSummary.backtest.strongest_score || 0),
+      };
       document.getElementById('backtest').innerHTML = `
-        <div class="metric"><div><strong>Live alerts (24h)</strong><div class="muted">Actual Discord alerts sent in the last 24 hours.</div></div><div class="score">${summary.backtest.live_alerts_24h}</div></div>
-        <div class="metric"><div><strong>Live alerts (7d)</strong><div class="muted">Actual Discord alerts sent in the last 7 days.</div></div><div class="score">${summary.backtest.live_alerts_7d}</div></div>
-        <div class="metric"><div><strong>Simulated alerts</strong><div class="muted">How many alerts the current rules would have produced in the last ${summary.backtest.lookback_days} days.</div></div><div class="score">${summary.backtest.simulated_alerts}</div></div>
-        <div class="metric"><div><strong>Topics tested</strong><div class="muted">How many topics existed in the backtest window.</div></div><div class="score">${summary.backtest.topics_tested}</div></div>
-        <div class="metric"><div><strong>Alert rate</strong><div class="muted">Simulated alerts divided by topics tested.</div></div><div class="score">${(summary.backtest.alert_rate * 100).toFixed(1)}%</div></div>
-        <div class="metric"><div><strong>Strongest topic</strong><div class="muted">${escapeHtml(summary.backtest.strongest_category || 'default')}</div></div><div class="score">${escapeHtml(summary.backtest.strongest_topic || '-')}</div></div>
-        <div class="metric"><div><strong>Peak score</strong><div class="muted">Highest simulated spike ratio seen in the backtest.</div></div><div class="score">${summary.backtest.strongest_score.toFixed(2)}</div></div>
+        <div class="metric"><div><strong>Live alerts (24h)</strong><div class="muted">Actual Discord alerts sent in the last 24 hours.</div></div><div class="score">${backtest.live_alerts_24h}</div></div>
+        <div class="metric"><div><strong>Live alerts (7d)</strong><div class="muted">Actual Discord alerts sent in the last 7 days.</div></div><div class="score">${backtest.live_alerts_7d}</div></div>
+        <div class="metric"><div><strong>Simulated alerts</strong><div class="muted">How many alerts the current rules would have produced in the last ${backtest.lookback_days} days.</div></div><div class="score">${backtest.simulated_alerts}</div></div>
+        <div class="metric"><div><strong>Topics tested</strong><div class="muted">How many topics existed in the backtest window.</div></div><div class="score">${backtest.topics_tested}</div></div>
+        <div class="metric"><div><strong>Alert rate</strong><div class="muted">Simulated alerts divided by topics tested.</div></div><div class="score">${(backtest.alert_rate * 100).toFixed(1)}%</div></div>
+        <div class="metric"><div><strong>Strongest topic</strong><div class="muted">${escapeHtml(backtest.strongest_category)}</div></div><div class="score">${escapeHtml(backtest.strongest_topic)}</div></div>
+        <div class="metric"><div><strong>Peak score</strong><div class="muted">Highest simulated spike ratio seen in the backtest.</div></div><div class="score">${backtest.strongest_score.toFixed(2)}</div></div>
       `;
 
-      const hasNewInRecent = recent.items.some((item) => item.new_mentions > 0);
+      const hasNewInRecent = safeRecent.items.some((item) => item.new_mentions > 0);
       document.getElementById('recent-status').textContent = hasNewInRecent
-        ? `New matches in recent rows: ${recent.total_new_mentions} / ${recent.total_fetched_mentions} fetched`
-        : `No new items in the most recent cycle(s). Seen before or no fresh matches. (${recent.total_new_mentions} / ${recent.total_fetched_mentions})`;
+        ? `New matches in recent rows: ${safeRecent.total_new_mentions} / ${safeRecent.total_fetched_mentions} fetched`
+        : `No new items in the most recent cycle(s). Seen before or no fresh matches. (${safeRecent.total_new_mentions} / ${safeRecent.total_fetched_mentions})`;
 
-      document.getElementById('recent').innerHTML = recent.items.map((item) => `
+      document.getElementById('recent').innerHTML = safeRecent.items.map((item) => `
         <li>
           <div class="row">
             <div>
@@ -1396,7 +2305,91 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
           <div class="muted">${item.observed_at_human} • new/fetched</div>
         </li>
       `).join('') || '<li class="muted">No data yet.</li>';
-      applyViewMode(summary);
+      renderWatchlist();
+      applyViewMode(safeSummary);
+      } catch (err) {
+        console.error('loadData failed:', err);
+        const message = `Could not load live data (${escapeHtml(String(err && err.message ? err.message : err))}).`;
+        ['daily-topics', 'hot-topics', 'categories', 'clusters', 'reactions', 'recent', 'backtest'].forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) el.innerHTML = `<li class="muted">${message}</li>`;
+        });
+        const status = document.getElementById('recent-status');
+        if (status) status.textContent = message;
+      }
+    }
+    async function ensureAuth() {
+      const overlay = document.getElementById('login-overlay');
+      try {
+        const me = await fetchApiJson('/api/me');
+        if (me && me.authenticated) {
+          userRole = (me.role || 'start').toLowerCase();
+          applyRoleUI();
+          overlay.style.display = 'none';
+          return true;
+        }
+      } catch (_err) {}
+      overlay.style.display = 'flex';
+      return false;
+    }
+    async function doLogin() {
+      const username = (document.getElementById('login-username').value || '').trim();
+      const password = (document.getElementById('login-password').value || '').trim();
+      const status = document.getElementById('login-status');
+      status.textContent = 'Loggar in...';
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ username, password }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          status.textContent = data.error || 'Fel login';
+          return;
+        }
+        userRole = (data.role || 'start').toLowerCase();
+        applyRoleUI();
+        document.getElementById('login-overlay').style.display = 'none';
+        status.textContent = '';
+        loadData();
+      } catch (_err) {
+        status.textContent = 'Kunde inte logga in';
+      }
+    }
+    async function doLogout() {
+      try {
+        await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+      } catch (_err) {}
+      const status = document.getElementById('login-status');
+      if (status) status.textContent = '';
+      const pw = document.getElementById('login-password');
+      if (pw) pw.value = '';
+      document.getElementById('login-overlay').style.display = 'flex';
+    }
+    function forceRefresh() {
+      const url = new URL(window.location.href);
+      url.searchParams.set('r', String(Date.now()));
+      window.location.replace(url.toString());
+    }
+    async function askPostAI() {
+      const input = document.getElementById('post-ai-question');
+      const box = document.getElementById('post-ai-answer');
+      const q = ((input && input.value) || '').trim();
+      box.textContent = 'Tänker...';
+      try {
+        const scope = `scope=${encodeURIComponent(marketScope)}`;
+        const question = `question=${encodeURIComponent(q || 'Vad är bäst att posta just nu?')}`;
+        const data = await fetchApiJson(`/api/post_ai?${scope}&${question}`);
+        const ideas = Array.isArray(data.ideas) ? data.ideas : [];
+        const ideasHtml = ideas.map((item, idx) => (
+          `<div style="margin-top:8px;"><strong>${idx + 1}. ${escapeHtml(item.topic || '')}</strong><div class="muted">${escapeHtml(item.hook || '')}</div></div>`
+        )).join('');
+        box.innerHTML = `<div>${escapeHtml(data.answer || 'Inget svar just nu.')}</div>${ideasHtml}`;
+      } catch (_err) {
+        box.textContent = 'Kunde inte hämta AI-svar just nu. Testa igen om några sekunder.';
+      }
     }
     function renderMediaPage(summary) {
       const params = new URLSearchParams(window.location.search || '');
@@ -1429,8 +2422,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       imageTarget.innerHTML = '<div class="muted">Laddar bilder...</div>';
       videoTarget.innerHTML = '<div class="muted">Laddar videor...</div>';
       try {
-        const res = await fetch(`/api/media?topic=${encodeURIComponent(topic || '')}`);
-        const data = await res.json();
+        const data = await fetchApiJson(`/api/media?topic=${encodeURIComponent(topic || '')}`);
         const imageCards = (data.images || []).map((item) => `
           <a class="media-image-card" href="${item.full_image || item.url}" target="_blank" rel="noreferrer">
             <img src="${item.thumbnail}" alt="${escapeHtml(item.title || 'Image')}" loading="lazy" />
@@ -1459,25 +2451,70 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     }
     function applyViewMode(summary) {
       const params = new URLSearchParams(window.location.search || '');
-      const mediaMode = params.get('view') === 'media';
+      const requestedView = (params.get('view') || '').toLowerCase();
+      const isProOrHigher = (ROLE_RANK[userRole] || 0) >= (ROLE_RANK.pro || 1);
+      const mediaMode = requestedView === 'media' && isProOrHigher;
+      const topicMode = requestedView === 'topic';
       const dashboardPage = document.getElementById('dashboard-page');
       const mediaPage = document.getElementById('media-page');
+      const topicPage = document.getElementById('topic-page');
       const navDashboard = document.getElementById('nav-dashboard');
       const navMedia = document.getElementById('nav-media');
+      const navTopic = document.getElementById('nav-topic');
+      if (!isProOrHigher && requestedView === 'media') {
+        const clean = new URL(window.location.href);
+        clean.searchParams.delete('view');
+        clean.searchParams.delete('topic');
+        window.history.replaceState({}, '', clean.toString());
+      }
       if (mediaMode) {
         dashboardPage.style.display = 'none';
+        topicPage.style.display = 'none';
         mediaPage.style.display = 'grid';
         renderMediaPage(summary);
         navDashboard.classList.remove('active');
+        navTopic.classList.remove('active');
         navMedia.classList.add('active');
+      } else if (topicMode) {
+        dashboardPage.style.display = 'none';
+        mediaPage.style.display = 'none';
+        topicPage.style.display = 'grid';
+        renderTopicPage(summary);
+        navDashboard.classList.remove('active');
+        navMedia.classList.remove('active');
+        navTopic.classList.add('active');
       } else {
         dashboardPage.style.display = 'grid';
         mediaPage.style.display = 'none';
+        topicPage.style.display = 'none';
         navMedia.classList.remove('active');
+        navTopic.classList.remove('active');
         navDashboard.classList.add('active');
       }
     }
-    loadData();
+    applyScopeButtons();
+    initTheme();
+    document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+    document.getElementById('refresh-btn').addEventListener('click', forceRefresh);
+    document.getElementById('logout-btn').addEventListener('click', doLogout);
+    applyRoleUI();
+    document.getElementById('login-submit').addEventListener('click', doLogin);
+    document.getElementById('login-password').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        doLogin();
+      }
+    });
+    document.getElementById('post-ai-ask').addEventListener('click', askPostAI);
+    document.getElementById('post-ai-question').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        askPostAI();
+      }
+    });
+    ensureAuth().then((ok) => {
+      if (ok) loadData();
+    });
     setInterval(loadData, 15000);
   </script>
 </body>
@@ -1490,19 +2527,92 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     settings: dict[str, Any]
 
     def do_GET(self) -> None:  # noqa: N802
+        if self.path.startswith("/api/me"):
+            session = self._session_info()
+            role = (session or {}).get("role")
+            self._send_json({"authenticated": bool(role), "role": role or "start"})
+            return
+        if self.path.startswith("/api/login"):
+            self._send_json({"ok": False, "error": "Use POST for login"}, status=405)
+            return
+        if self.path.startswith("/api/") and not self._is_authenticated():
+            self._send_json({"ok": False, "error": "Unauthorized"}, status=401)
+            return
         if self.path.startswith("/api/summary"):
-            self._send_json(self._summary_payload())
+            scope = parse_qs(urlparse(self.path).query).get("scope", [""])[0].strip().lower()
+            market_scope = scope if scope in {"sweden", "global"} else None
+            self._send_json(self._summary_payload(market_scope))
             return
         if self.path.startswith("/api/recent"):
-            self._send_json(self._recent_payload())
+            scope = parse_qs(urlparse(self.path).query).get("scope", [""])[0].strip().lower()
+            market_scope = scope if scope in {"sweden", "global"} else None
+            self._send_json(self._recent_payload(market_scope))
             return
         if self.path.startswith("/api/media"):
             topic = parse_qs(urlparse(self.path).query).get("topic", [""])[0]
             self._send_json(_media_payload(topic))
             return
+        if self.path.startswith("/api/brief"):
+            topic = parse_qs(urlparse(self.path).query).get("topic", [""])[0]
+            self._send_json(_topic_brief_payload(topic))
+            return
+        if self.path.startswith("/api/post_ai"):
+            role = self._current_role()
+            allowed, remaining = self._consume_post_ai_quota(role)
+            if not allowed:
+                self._send_json(
+                    {
+                        "ok": False,
+                        "error": "Daily limit reached for your plan.",
+                        "role": role,
+                        "remaining": 0,
+                    },
+                    status=429,
+                )
+                return
+            params = parse_qs(urlparse(self.path).query)
+            topic_question = params.get("question", [""])[0]
+            scope = params.get("scope", [""])[0].strip().lower()
+            market_scope = scope if scope in {"sweden", "global"} else None
+            payload = _post_ai_payload(self.storage, self.settings, topic_question, market_scope)
+            payload["role"] = role
+            payload["remaining"] = remaining
+            self._send_json(payload)
+            return
         self._send_html(_render_index())
 
+    def do_POST(self) -> None:  # noqa: N802
+        if self.path.startswith("/api/login"):
+            raw = self._read_json_body()
+            username = str(raw.get("username", "")).strip().lower()
+            password = str(raw.get("password", "")).strip()
+            creds = self._auth_credentials()
+            expected = creds.get(username, "")
+            if not expected or not self._verify_password(password, expected):
+                self._send_json({"ok": False, "error": "Fel användarnamn eller lösenord"}, status=401)
+                return
+            token = secrets.token_urlsafe(24)
+            _SESSION_STORE[token] = {"role": username, "created_at": int(time.time())}
+            self._send_json(
+                {"ok": True, "role": username},
+                headers={"Set-Cookie": f"trendbot_session={token}; Path=/; HttpOnly; SameSite=Lax"},
+            )
+            return
+        if self.path.startswith("/api/logout"):
+            token = self._session_token()
+            if token:
+                _SESSION_STORE.pop(token, None)
+            self._send_json(
+                {"ok": True},
+                headers={"Set-Cookie": "trendbot_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"},
+            )
+            return
+        self._send_json({"ok": False, "error": "Not found"}, status=404)
+
     def do_HEAD(self) -> None:  # noqa: N802
+        if self.path.startswith("/api/") and not self.path.startswith("/api/me") and not self._is_authenticated():
+            self._send_headers("application/json; charset=utf-8", 0, status=401)
+            return
         if self.path.startswith("/api/summary"):
             self._send_headers("application/json; charset=utf-8", len(json.dumps(self._summary_payload()).encode("utf-8")))
             return
@@ -1513,24 +2623,127 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             topic = parse_qs(urlparse(self.path).query).get("topic", [""])[0]
             self._send_headers("application/json; charset=utf-8", len(json.dumps(_media_payload(topic)).encode("utf-8")))
             return
+        if self.path.startswith("/api/brief"):
+            topic = parse_qs(urlparse(self.path).query).get("topic", [""])[0]
+            self._send_headers("application/json; charset=utf-8", len(json.dumps(_topic_brief_payload(topic)).encode("utf-8")))
+            return
+        if self.path.startswith("/api/post_ai"):
+            params = parse_qs(urlparse(self.path).query)
+            topic_question = params.get("question", [""])[0]
+            scope = params.get("scope", [""])[0].strip().lower()
+            market_scope = scope if scope in {"sweden", "global"} else None
+            payload = _post_ai_payload(self.storage, self.settings, topic_question, market_scope)
+            self._send_headers("application/json; charset=utf-8", len(json.dumps(payload).encode("utf-8")))
+            return
         body = _render_index().encode("utf-8")
         self._send_headers("text/html; charset=utf-8", len(body))
 
-    def _summary_payload(self) -> dict[str, Any]:
-        return _summary_payload(self.storage, self.settings)
+    def _summary_payload(self, market_scope: str | None = None) -> dict[str, Any]:
+        return _summary_payload(self.storage, self.settings, market_scope)
 
-    def _recent_payload(self) -> dict[str, Any]:
-        return _recent_payload(self.storage)
+    def _recent_payload(self, market_scope: str | None = None) -> dict[str, Any]:
+        return _recent_payload(self.storage, market_scope)
 
-    def _send_json(self, payload: dict[str, Any]) -> None:
+    def _auth_credentials(self) -> dict[str, str]:
+        return {
+            "admin": (self.settings.get("dashboard_admin_password") or "").strip(),
+            "start": (self.settings.get("dashboard_start_password") or "").strip(),
+            "pro": (self.settings.get("dashboard_pro_password") or "").strip(),
+        }
+
+    def _verify_password(self, provided: str, stored: str) -> bool:
+        # Preferred format:
+        # pbkdf2_sha256$<iterations>$<salt>$<hex_digest>
+        if stored.startswith("pbkdf2_sha256$"):
+            try:
+                _, iter_s, salt, digest_hex = stored.split("$", 3)
+                iterations = int(iter_s)
+                calculated = hashlib.pbkdf2_hmac(
+                    "sha256",
+                    provided.encode("utf-8"),
+                    salt.encode("utf-8"),
+                    iterations,
+                ).hex()
+                return hmac.compare_digest(calculated, digest_hex)
+            except Exception:
+                return False
+        # Backward-compatible fallback (plain text). Prefer hashed values in .env.
+        return hmac.compare_digest(provided, stored)
+
+    def _session_token(self) -> str:
+        cookie = self.headers.get("Cookie", "")
+        for part in cookie.split(";"):
+            part = part.strip()
+            if part.startswith("trendbot_session="):
+                return part.split("=", 1)[1].strip()
+        return ""
+
+    def _session_info(self) -> dict[str, Any] | None:
+        token = self._session_token()
+        if not token:
+            return None
+        return _SESSION_STORE.get(token)
+
+    def _current_role(self) -> str:
+        session = self._session_info() or {}
+        role = str(session.get("role", "")).lower()
+        if role in {"admin", "pro", "start"}:
+            return role
+        return "start"
+
+    def _post_ai_limit_for_role(self, role: str) -> int:
+        if role == "admin":
+            return 10_000_000
+        if role == "pro":
+            return 5
+        return 1
+
+    def _consume_post_ai_quota(self, role: str) -> tuple[bool, int]:
+        if role == "admin":
+            return True, 10_000_000
+        local_day = time.strftime("%Y-%m-%d", time.localtime())
+        state_key = f"post_ai_usage:{local_day}:{role}"
+        used_raw = self.storage.get_state(state_key) or "0"
+        try:
+            used = int(used_raw)
+        except ValueError:
+            used = 0
+        limit = self._post_ai_limit_for_role(role)
+        if used >= limit:
+            return False, 0
+        used += 1
+        self.storage.set_state(state_key, str(used))
+        remaining = max(0, limit - used)
+        return True, remaining
+
+    def _is_authenticated(self) -> bool:
+        session = self._session_info()
+        return bool(session and session.get("role") in {"admin", "start", "pro"})
+
+    def _read_json_body(self) -> dict[str, Any]:
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+        except ValueError:
+            length = 0
+        raw = self.rfile.read(length) if length > 0 else b"{}"
+        try:
+            data = json.loads(raw.decode("utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _send_json(self, payload: dict[str, Any], status: int = 200, headers: dict[str, str] | None = None) -> None:
         data = json.dumps(payload).encode("utf-8")
-        self._send_headers("application/json; charset=utf-8", len(data))
+        self._send_headers("application/json; charset=utf-8", len(data), status=status, headers=headers)
         self.wfile.write(data)
 
-    def _send_headers(self, content_type: str, content_length: int) -> None:
-        self.send_response(200)
+    def _send_headers(self, content_type: str, content_length: int, status: int = 200, headers: dict[str, str] | None = None) -> None:
+        self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(content_length))
+        if headers:
+            for key, value in headers.items():
+                self.send_header(key, value)
         self.end_headers()
 
     def _send_html(self, body: str) -> None:
@@ -1575,8 +2788,8 @@ class DashboardServer:
 
 def write_snapshot_file(storage: Storage, path: str, settings: dict[str, Any] | None = None) -> None:
     snapshot = {
-        "summary": _summary_payload(storage, settings or {}),
-        "recent": _recent_payload(storage),
+        "summary": _summary_payload(storage, settings or {}, "sweden"),
+        "recent": _recent_payload(storage, "sweden"),
     }
     html = _render_index(snapshot)
     Path(path).write_text(html, encoding="utf-8")

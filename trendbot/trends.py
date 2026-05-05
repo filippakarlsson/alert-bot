@@ -167,6 +167,8 @@ def _clean_headline(title: str) -> str:
         cleaned = cleaned.split("|", 1)[0].strip()
     if " - " in cleaned:
         cleaned = cleaned.split(" - ", 1)[0].strip()
+    # Remove broadcaster-style generic lead-ins.
+    cleaned = re.sub(r"^(just nu|senaste|breaking|live|nu)\s*[:\-–—]?\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
 
@@ -199,6 +201,13 @@ def _simplify_title(title: str, blocked_terms: Sequence[str]) -> List[str]:
             continue
         simplified.append(token.strip("'"))
     return simplified
+
+
+def _signal_text(item: FeedItem) -> str:
+    summary = (item.summary or "").strip()
+    if not summary:
+        return item.title
+    return f"{item.title} {summary}"
 
 
 def _title_score(tokens: Sequence[str]) -> int:
@@ -287,6 +296,48 @@ def _headline_to_label(headline: str, fallback: str) -> str:
     return clean or fallback
 
 
+def _canonical_story_key(item: FeedItem, blocked_terms: Sequence[str]) -> str:
+    tokens = [_normalize_token(tok) for tok in _simplify_title(_signal_text(item), blocked_terms)]
+    tokens = [tok for tok in tokens if tok and tok not in STOPWORDS]
+    if not tokens:
+        return _normalize_token(_clean_headline(item.title)) or item.id
+    return " ".join(tokens[:12])
+
+
+def dedupe_feed_items(items: Sequence[FeedItem], blocked_terms: Sequence[str]) -> List[FeedItem]:
+    unique: List[FeedItem] = []
+    seen: set[str] = set()
+    for item in items:
+        key = _canonical_story_key(item, blocked_terms)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def _extract_entities(text: str, blocked_terms: Sequence[str]) -> List[str]:
+    candidates = re.findall(r"(?:[#@]?[A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9'’.-]*(?:\s+[A-ZÅÄÖ0-9][A-Za-zÅÄÖåäö0-9'’.-]*){0,4})", text)
+    entities: List[str] = []
+    for cand in candidates:
+        clean = re.sub(r"\s+", " ", cand).strip(" -–—,.;:!?")
+        if not clean:
+            continue
+        words = [_normalize_token(part) for part in clean.split()]
+        words = [w for w in words if w]
+        if not words:
+            continue
+        if len(words) == 1 and (words[0] in STOPWORDS or len(words[0]) < 3):
+            continue
+        if any(any(bt.lower() in w for bt in blocked_terms) for w in words):
+            continue
+        norm = " ".join(words)
+        if norm in {"svenska", "sverige", "tv", "news", "music", "movie", "movies"}:
+            continue
+        entities.append(clean)
+    return entities
+
+
 def normalize_cluster_key(text: str) -> str:
     tokens = []
     for token in _simplify_title(text, ()):
@@ -303,14 +354,40 @@ def extract_trend_signal(items: Sequence[FeedItem], blocked_terms: Sequence[str]
     if not items:
         return None
 
+    items = dedupe_feed_items(items, blocked_terms)
+    if not items:
+        return None
+
     item_tokens: List[tuple[FeedItem, List[str]]] = [
-        (item, _simplify_title(item.title, blocked_terms))
+        (item, _simplify_title(_signal_text(item), blocked_terms))
         for item in items
     ]
     item_tokens = [(item, tokens) for item, tokens in item_tokens if tokens]
     simplified_titles: List[List[str]] = [tokens for _, tokens in item_tokens]
     if not simplified_titles:
         return None
+
+    entity_counts: Counter[str] = Counter()
+    entity_example: dict[str, FeedItem] = {}
+    for item in items:
+        seen_entities = set(_extract_entities(_signal_text(item), blocked_terms))
+        for ent in seen_entities:
+            entity_counts[ent] += 1
+            entity_example.setdefault(ent, item)
+
+    strong_entities = [(ent, cnt) for ent, cnt in entity_counts.items() if cnt >= 2]
+    if strong_entities:
+        ent, cnt = max(strong_entities, key=lambda entry: (entry[1], len(entry[0])))
+        ex_item = entity_example[ent]
+        label = _headline_to_label(ex_item.title, ent)
+        if _label_is_too_broad(label):
+            label = ent
+        return TrendSignal(
+            label=label,
+            example_title=ex_item.title,
+            source=source,
+            score=cnt + 2,
+        )
 
     ngram_counts: Counter[str] = Counter()
     ngram_examples: dict[str, str] = {}

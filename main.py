@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import sys
 import time
+import re
+import os
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from statistics import mean
@@ -13,7 +16,30 @@ from trendbot.dashboard import DashboardServer, write_snapshot_file
 from trendbot.fetchers import GoogleNewsFetcher, RSSFetcher, RedditFetcher
 from trendbot.notifier import DiscordNotifier
 from trendbot.storage import Observation, Storage, TopicRollup
-from trendbot.trends import choose_alert_topic, extract_trend_signal, normalize_cluster_key
+from trendbot.trends import choose_alert_topic, dedupe_feed_items, extract_trend_signal, normalize_cluster_key
+
+SOURCE_SCOPE: dict[str, str] = {
+    "google_news_se": "sweden",
+    "aftonbladet_noje": "sweden",
+    "expressen_noje": "sweden",
+    "hant": "sweden",
+    "hant_extra": "sweden",
+    "svt_noje": "sweden",
+    "tv4_noje": "sweden",
+    "google_news_global": "global",
+    "bbc_entertainment": "global",
+    "npr_music": "global",
+    "ap_entertainment": "global",
+    "variety": "global",
+    "billboard": "global",
+    "the_verge": "global",
+    "people": "global",
+    "eonline": "global",
+    "tmz": "global",
+    "rolling_stone": "global",
+    "reddit": "global",
+    "tiktok_web": "global",
+}
 
 
 def log(message: str) -> None:
@@ -24,6 +50,13 @@ def log(message: str) -> None:
 def _contains_blocked_term(text: str, blocked_terms: list[str]) -> bool:
     lowered = text.lower()
     return any(term and term.lower() in lowered for term in blocked_terms)
+
+
+def _looks_like_previous_year_story(text: str, current_year: int) -> bool:
+    years = [int(match) for match in re.findall(r"\b(20\d{2})\b", text)]
+    if not years:
+        return False
+    return max(years) < current_year
 
 
 def _topic_thresholds(topic: str, config):
@@ -87,6 +120,7 @@ def _build_fetchers(config):
                 feed_url="https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml",
                 limit=config.reddit_limit,
                 timeout_seconds=config.reddit_timeout_seconds,
+                refresh_seconds=config.rss_refresh_seconds,
             )
         )
     if config.enable_source_npr:
@@ -96,6 +130,7 @@ def _build_fetchers(config):
                 feed_url="https://feeds.npr.org/1039/rss.xml",
                 limit=config.reddit_limit,
                 timeout_seconds=config.reddit_timeout_seconds,
+                refresh_seconds=config.rss_refresh_seconds,
             )
         )
     if config.enable_source_ap:
@@ -105,6 +140,7 @@ def _build_fetchers(config):
                 feed_url="https://apnews.com/hub/entertainment?output=rss",
                 limit=config.reddit_limit,
                 timeout_seconds=config.reddit_timeout_seconds,
+                refresh_seconds=config.rss_refresh_seconds,
             )
         )
     if config.enable_source_variety:
@@ -114,6 +150,7 @@ def _build_fetchers(config):
                 feed_url="https://variety.com/feed/",
                 limit=config.reddit_limit,
                 timeout_seconds=config.reddit_timeout_seconds,
+                refresh_seconds=config.rss_refresh_seconds,
             )
         )
     if config.enable_source_billboard:
@@ -123,6 +160,7 @@ def _build_fetchers(config):
                 feed_url="https://www.billboard.com/feed/",
                 limit=config.reddit_limit,
                 timeout_seconds=config.reddit_timeout_seconds,
+                refresh_seconds=config.rss_refresh_seconds,
             )
         )
     if config.enable_source_the_verge:
@@ -132,6 +170,47 @@ def _build_fetchers(config):
                 feed_url="https://www.theverge.com/rss/index.xml",
                 limit=config.reddit_limit,
                 timeout_seconds=config.reddit_timeout_seconds,
+                refresh_seconds=config.rss_refresh_seconds,
+            )
+        )
+    if config.enable_source_people:
+        fetchers.append(
+            RSSFetcher(
+                source_name="people",
+                feed_url="https://people.com/feed/",
+                limit=config.reddit_limit,
+                timeout_seconds=config.reddit_timeout_seconds,
+                refresh_seconds=config.rss_refresh_seconds,
+            )
+        )
+    if config.enable_source_eonline:
+        fetchers.append(
+            RSSFetcher(
+                source_name="eonline",
+                feed_url="https://www.eonline.com/syndication/feeds/rssfeeds/topstories.xml",
+                limit=config.reddit_limit,
+                timeout_seconds=config.reddit_timeout_seconds,
+                refresh_seconds=config.rss_refresh_seconds,
+            )
+        )
+    if config.enable_source_tmz:
+        fetchers.append(
+            RSSFetcher(
+                source_name="tmz",
+                feed_url="https://www.tmz.com/rss.xml",
+                limit=config.reddit_limit,
+                timeout_seconds=config.reddit_timeout_seconds,
+                refresh_seconds=config.rss_refresh_seconds,
+            )
+        )
+    if config.enable_source_rollingstone:
+        fetchers.append(
+            RSSFetcher(
+                source_name="rolling_stone",
+                feed_url="https://www.rollingstone.com/feed/",
+                limit=config.reddit_limit,
+                timeout_seconds=config.reddit_timeout_seconds,
+                refresh_seconds=config.rss_refresh_seconds,
             )
         )
     if config.enable_source_aftonbladet:
@@ -167,6 +246,17 @@ def _build_fetchers(config):
         )
         hant.source_name = "hant"
         fetchers.append(hant)
+    if config.enable_source_hant_extra:
+        hant_extra = GoogleNewsFetcher(
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+            hl="sv-SE",
+            gl="SE",
+            ceid="SE:sv",
+            query_suffix=f"site:hant.se \"hänt extra\" nöje {recency_suffix}".strip(),
+        )
+        hant_extra.source_name = "hant_extra"
+        fetchers.append(hant_extra)
     if config.enable_source_svt:
         svt = GoogleNewsFetcher(
             limit=config.reddit_limit,
@@ -189,6 +279,17 @@ def _build_fetchers(config):
         )
         tv4.source_name = "tv4_noje"
         fetchers.append(tv4)
+    if config.enable_source_tiktok:
+        tiktok = GoogleNewsFetcher(
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+            hl="en-US",
+            gl="US",
+            ceid="US:en",
+            query_suffix=f"site:tiktok.com {recency_suffix}".strip(),
+        )
+        tiktok.source_name = "tiktok_web"
+        fetchers.append(tiktok)
     if config.reddit_enabled:
         fetchers.insert(
             0,
@@ -196,9 +297,25 @@ def _build_fetchers(config):
                 limit=config.reddit_limit,
                 timeout_seconds=config.reddit_timeout_seconds,
                 subreddits=config.reddit_subreddits,
+                refresh_seconds=config.reddit_refresh_seconds,
+                request_delay_seconds=config.reddit_request_delay_seconds,
+                backoff_seconds=config.reddit_backoff_seconds,
             ),
         )
     return fetchers
+
+
+def _infer_market_scope(new_posts_by_source: dict[str, list]) -> str:
+    scopes = {
+        SOURCE_SCOPE.get(source, "global")
+        for source, posts in new_posts_by_source.items()
+        if posts
+    }
+    if not scopes:
+        return "mixed"
+    if len(scopes) == 1:
+        return next(iter(scopes))
+    return "mixed"
 
 
 def poll_once(config=None, storage=None) -> int:
@@ -216,6 +333,7 @@ def poll_once(config=None, storage=None) -> int:
 
     alerts_sent = 0
     now = int(time.time())
+    current_year = datetime.now(timezone.utc).year
     oldest_allowed = now - (max(1, config.max_item_age_hours) * 3600)
     closest_candidate: ClosestCandidate | None = None
 
@@ -237,7 +355,14 @@ def poll_once(config=None, storage=None) -> int:
 
             new_posts = []
             for post in posts:
+                if config.require_item_timestamp and post.created_utc <= 0:
+                    continue
                 if post.created_utc and post.created_utc < oldest_allowed:
+                    continue
+                if config.skip_previous_year_titles and _looks_like_previous_year_story(
+                    f"{post.title} {post.summary}",
+                    current_year,
+                ):
                     continue
                 if _contains_blocked_term(f"{post.title} {post.url}", config.blocked_terms):
                     continue
@@ -302,11 +427,12 @@ def poll_once(config=None, storage=None) -> int:
         combined_posts = []
         for posts in new_posts_by_source.values():
             combined_posts.extend(posts)
+        combined_posts = dedupe_feed_items(combined_posts, config.blocked_terms)
         source_count = sum(1 for posts in new_posts_by_source.values() if posts)
         cluster_signal = extract_trend_signal(combined_posts, config.blocked_terms, topic)
         cluster_label = cluster_signal.label if cluster_signal else topic
         cluster_key = normalize_cluster_key(cluster_label)
-        combined_mentions = sum(len(posts) for posts in new_posts_by_source.values())
+        combined_mentions = len(combined_posts)
         combined_baseline = mean(baselines_by_source) if baselines_by_source else 0.0
         signal_strength = float(cluster_signal.score) if cluster_signal else 0.0
         rollup_score = score_trend(
@@ -321,11 +447,22 @@ def poll_once(config=None, storage=None) -> int:
                 observed_at=now,
                 total_mentions=combined_mentions,
                 source_count=source_count,
-                category=categorize_topic(topic),
+                category=categorize_topic(
+                    " ".join(
+                        part
+                        for part in (
+                            cluster_label,
+                            cluster_signal.example_title if cluster_signal else "",
+                            topic,
+                        )
+                        if part
+                    )
+                ),
                 cluster_key=cluster_key,
                 cluster_label=cluster_label,
                 trend_score=rollup_score,
                 example_title=cluster_signal.example_title if cluster_signal else "",
+                market_scope=_infer_market_scope(new_posts_by_source),
             )
         )
 
@@ -455,6 +592,9 @@ def update_snapshot(storage: Storage, config) -> None:
                 "daily_series_window_seconds": config.daily_series_window_seconds,
                 "alert_count_offset": config.alert_count_offset,
                 "blocked_terms": config.blocked_terms,
+                "dashboard_admin_password": os.getenv("DASHBOARD_ADMIN_PASSWORD", "").strip(),
+                "dashboard_start_password": os.getenv("DASHBOARD_START_PASSWORD", "").strip(),
+                "dashboard_pro_password": os.getenv("DASHBOARD_PRO_PASSWORD", "").strip(),
             },
         )
     except Exception as exc:
@@ -462,6 +602,8 @@ def update_snapshot(storage: Storage, config) -> None:
 
 
 def main() -> None:
+    # Ensure relative paths (.env, sqlite, snapshot) resolve from project folder.
+    os.chdir(Path(__file__).resolve().parent)
     if len(sys.argv) > 1 and sys.argv[1] == "once":
         config = load_config()
         storage = Storage(config.db_path)
@@ -496,6 +638,9 @@ def main() -> None:
                     "daily_series_window_seconds": config.daily_series_window_seconds,
                     "alert_count_offset": config.alert_count_offset,
                     "blocked_terms": config.blocked_terms,
+                    "dashboard_admin_password": os.getenv("DASHBOARD_ADMIN_PASSWORD", "").strip(),
+                    "dashboard_start_password": os.getenv("DASHBOARD_START_PASSWORD", "").strip(),
+                    "dashboard_pro_password": os.getenv("DASHBOARD_PRO_PASSWORD", "").strip(),
                 },
             )
             dashboard.start()

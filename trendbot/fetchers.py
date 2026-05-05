@@ -19,6 +19,45 @@ class FeedItem:
     title: str
     url: str
     created_utc: int
+    summary: str = ""
+
+
+_TOPIC_SOFT_TERMS = {
+    "svensk",
+    "svenska",
+    "sverige",
+    "sweden",
+    "nöje",
+    "noje",
+    "popkultur",
+    "popculture",
+}
+
+
+def _topic_terms(topic: str) -> List[str]:
+    return [part for part in re.split(r"\s+", topic.lower().strip()) if part]
+
+
+def _topic_match_terms(topic: str | List[str]) -> tuple[List[str], bool]:
+    terms = topic if isinstance(topic, list) else _topic_terms(topic)
+    base_terms = [term for term in terms if len(term) >= 3]
+    if not base_terms:
+        return ([], False)
+    significant = [term for term in base_terms if term not in _TOPIC_SOFT_TERMS]
+    if significant:
+        return (significant, False)
+    # If all tokens are soft/generic, fall back to strict match to avoid flooding.
+    return (base_terms, True)
+
+
+def _matches_topic_terms(terms: List[str], haystack: str, strict_all: bool = False) -> bool:
+    if not terms:
+        return True
+    if strict_all:
+        return all(term in haystack for term in terms)
+    matches = sum(1 for term in terms if term in haystack)
+    required = max(1, (len(terms) + 1) // 2)
+    return matches >= required
 
 
 class RedditFetcher:
@@ -30,18 +69,26 @@ class RedditFetcher:
         limit: int = 25,
         timeout_seconds: int = 15,
         subreddits: Optional[List[str]] = None,
+        refresh_seconds: int = 900,
+        request_delay_seconds: float = 1.2,
+        backoff_seconds: int = 1800,
     ) -> None:
         self.limit = limit
         self.timeout_seconds = timeout_seconds
         self.subreddits = [sub.strip().lstrip("r/").lower() for sub in (subreddits or []) if sub.strip()]
+        self.refresh_seconds = max(60, int(refresh_seconds))
+        self.request_delay_seconds = max(0.0, float(request_delay_seconds))
+        self.backoff_seconds = max(300, int(backoff_seconds))
         self._cached_items: List[FeedItem] | None = None
+        self._cached_at_utc: int = 0
+        self._backoff_until_utc: int = 0
 
     def search(self, topic: str) -> List[FeedItem]:
         topic_terms = self._topic_terms(topic)
         posts: List[FeedItem] = []
         source_items = self._fetch_items(topic)
         for item in source_items:
-            if not self._matches_topic(topic_terms, item.title, item.url):
+            if not self._matches_topic(topic_terms, item.title, f"{item.summary} {item.url}"):
                 continue
             posts.append(item)
             if len(posts) >= self.limit:
@@ -50,8 +97,19 @@ class RedditFetcher:
 
     def _fetch_items(self, topic: str) -> List[FeedItem]:
         if self.subreddits:
-            if self._cached_items is None:
-                self._cached_items = self._fetch_whitelisted_subreddits()
+            now = int(time.time())
+            if now < self._backoff_until_utc:
+                return self._cached_items or []
+            cache_age = now - self._cached_at_utc if self._cached_at_utc else None
+            if self._cached_items is not None and cache_age is not None and cache_age < self.refresh_seconds:
+                return self._cached_items
+            refreshed = self._fetch_whitelisted_subreddits()
+            if refreshed:
+                self._cached_items = refreshed
+                self._cached_at_utc = now
+            elif self._cached_items is None:
+                self._cached_items = []
+                self._cached_at_utc = now
             return self._cached_items
         return self._fetch_search_results(topic)
 
@@ -69,7 +127,7 @@ class RedditFetcher:
     def _fetch_whitelisted_subreddits(self) -> List[FeedItem]:
         items: List[FeedItem] = []
         seen_ids: set[str] = set()
-        for subreddit in self.subreddits:
+        for index, subreddit in enumerate(self.subreddits):
             feed_url = f"https://www.reddit.com/r/{subreddit}/new/.rss?limit={self.limit}"
             feed_items = self._fetch_feed(feed_url)
             for item in feed_items:
@@ -77,6 +135,8 @@ class RedditFetcher:
                     continue
                 items.append(item)
                 seen_ids.add(item.id)
+            if self.request_delay_seconds > 0 and index < len(self.subreddits) - 1:
+                time.sleep(self.request_delay_seconds)
         return items
 
     def _fetch_feed(self, url: str) -> List[FeedItem]:
@@ -91,7 +151,10 @@ class RedditFetcher:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 payload = response.read()
         except urllib.error.HTTPError as exc:
-            if exc.code in {404, 429}:
+            if exc.code == 429:
+                self._backoff_until_utc = int(time.time()) + self.backoff_seconds
+                return []
+            if exc.code == 404:
                 return []
             raise
         return self._parse_feed(payload)
@@ -108,6 +171,9 @@ class RedditFetcher:
             )
             link_el = entry.find("atom:link", self._ATOM_NS)
             link = link_el.attrib.get("href", "") if link_el is not None else ""
+            summary = html.unescape(
+                entry.findtext("atom:summary", default="", namespaces=self._ATOM_NS).strip()
+            )
             updated = entry.findtext("atom:updated", default="", namespaces=self._ATOM_NS)
             created_utc = 0
             if updated:
@@ -122,13 +188,14 @@ class RedditFetcher:
                     title=title,
                     url=link,
                     created_utc=created_utc,
+                    summary=summary,
                 )
             )
         return posts
 
     @staticmethod
     def _topic_terms(topic: str) -> List[str]:
-        return [part for part in re.split(r"\s+", topic.lower().strip()) if part]
+        return _topic_terms(topic)
 
     @staticmethod
     def _strip_html(value: str) -> str:
@@ -136,7 +203,8 @@ class RedditFetcher:
 
     def _matches_topic(self, topic_terms: List[str], title: str, content: str) -> bool:
         haystack = f"{title} {self._strip_html(content)}".lower()
-        return all(term in haystack for term in topic_terms)
+        terms, strict_all = _topic_match_terms(topic_terms)
+        return _matches_topic_terms(terms, haystack, strict_all=strict_all)
 
 
 class GoogleNewsFetcher:
@@ -192,11 +260,12 @@ class GoogleNewsFetcher:
             title = self._text(item, "title")
             link = self._text(item, "link")
             guid = self._text(item, "guid") or link
+            description = self._text(item, "description")
             pub_date = self._text(item, "pubDate")
             created_utc = self._parse_pub_date(pub_date)
             if not title or not guid:
                 continue
-            if not self._matches_topic(topic, title, self._text(item, "description")):
+            if not self._matches_topic(topic, title, description):
                 continue
             items.append(
                 FeedItem(
@@ -204,6 +273,7 @@ class GoogleNewsFetcher:
                     title=title,
                     url=link,
                     created_utc=created_utc,
+                    summary=description,
                 )
             )
         return items
@@ -224,12 +294,12 @@ class GoogleNewsFetcher:
 
     @staticmethod
     def _topic_terms(topic: str) -> List[str]:
-        return [part for part in re.split(r"\s+", topic.lower().strip()) if part]
+        return _topic_terms(topic)
 
     def _matches_topic(self, topic: str, title: str, description: str) -> bool:
-        topic_terms = self._topic_terms(topic)
+        topic_terms, strict_all = _topic_match_terms(topic)
         haystack = f"{title} {self._strip_html(description)}".lower()
-        return all(term in haystack for term in topic_terms)
+        return _matches_topic_terms(topic_terms, haystack, strict_all=strict_all)
 
     @staticmethod
     def _strip_html(value: str) -> str:
@@ -243,15 +313,20 @@ class RSSFetcher:
         feed_url: str,
         limit: int = 20,
         timeout_seconds: int = 15,
+        refresh_seconds: int = 300,
     ) -> None:
         self.source_name = source_name
         self.feed_url = feed_url
         self.limit = limit
         self.timeout_seconds = timeout_seconds
+        self.refresh_seconds = max(30, int(refresh_seconds))
         self._cached_items: List[FeedItem] | None = None
+        self._cached_at_utc: int = 0
 
     def search(self, topic: str) -> List[FeedItem]:
-        if self._cached_items is None:
+        now = int(time.time())
+        cache_age = now - self._cached_at_utc if self._cached_at_utc else None
+        if self._cached_items is None or cache_age is None or cache_age >= self.refresh_seconds:
             request = urllib.request.Request(
                 self.feed_url,
                 headers={
@@ -265,9 +340,11 @@ class RSSFetcher:
             except urllib.error.HTTPError as exc:
                 if exc.code in {404, 429}:
                     self._cached_items = []
+                    self._cached_at_utc = now
                     return []
                 raise
             self._cached_items = self._parse_feed(payload)
+            self._cached_at_utc = now
         return self._filter_items(self._cached_items, topic)
 
     def _parse_feed(self, payload: bytes) -> List[FeedItem]:
@@ -294,6 +371,7 @@ class RSSFetcher:
                         title=title,
                         url=link,
                         created_utc=created_utc,
+                        summary=description,
                     )
                 )
             return posts
@@ -326,6 +404,7 @@ class RSSFetcher:
                     title=title,
                     url=link,
                     created_utc=created_utc,
+                    summary=html.unescape((summary or "").strip()),
                 )
             )
             if len(posts) >= self.limit:
@@ -345,7 +424,7 @@ class RSSFetcher:
 
     @staticmethod
     def _topic_terms(topic: str) -> List[str]:
-        return [part for part in re.split(r"\s+", topic.lower().strip()) if part]
+        return _topic_terms(topic)
 
     @staticmethod
     def _text(item: ET.Element, tag: str) -> str:
@@ -367,4 +446,5 @@ class RSSFetcher:
 
     def _matches_topic(self, topic_terms: List[str], title: str, content: str) -> bool:
         haystack = f"{title} {self._strip_html(content)}".lower()
-        return all(term in haystack for term in topic_terms)
+        terms, strict_all = _topic_match_terms(topic_terms)
+        return _matches_topic_terms(terms, haystack, strict_all=strict_all)

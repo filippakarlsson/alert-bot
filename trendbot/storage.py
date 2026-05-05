@@ -28,6 +28,7 @@ class TopicSummary:
     trend_score: float = 0.0
     source_count: int = 0
     example_title: str = ""
+    market_scope: str = "mixed"
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class TopicRollup:
     cluster_label: str
     trend_score: float
     example_title: str
+    market_scope: str = "mixed"
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,7 @@ class ClusterSummary:
     topic_count: int
     trend_score: float
     example_title: str = ""
+    market_scope: str = "mixed"
 
 
 @dataclass(frozen=True)
@@ -167,10 +170,22 @@ class Storage:
                     cluster_key TEXT NOT NULL,
                     cluster_label TEXT NOT NULL,
                     trend_score REAL NOT NULL,
-                    example_title TEXT NOT NULL
+                    example_title TEXT NOT NULL,
+                    market_scope TEXT NOT NULL DEFAULT 'mixed'
                 )
                 """
             )
+            rollup_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(topic_rollups)").fetchall()
+            }
+            if "market_scope" not in rollup_columns:
+                conn.execute(
+                    """
+                    ALTER TABLE topic_rollups
+                    ADD COLUMN market_scope TEXT NOT NULL DEFAULT 'mixed'
+                    """
+                )
 
     def has_seen_item(self, source: str, topic: str, item_id: str) -> bool:
         with self._connect() as conn:
@@ -225,9 +240,9 @@ class Storage:
                 """
                 INSERT INTO topic_rollups (
                     topic, observed_at, total_mentions, source_count,
-                    category, cluster_key, cluster_label, trend_score, example_title
+                    category, cluster_key, cluster_label, trend_score, example_title, market_scope
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rollup.topic,
@@ -239,6 +254,7 @@ class Storage:
                     rollup.cluster_label,
                     rollup.trend_score,
                     rollup.example_title,
+                    rollup.market_scope,
                 ),
             )
 
@@ -291,28 +307,44 @@ class Storage:
             for row in rows
         ]
 
-    def top_topics_since(self, since_ts: int, limit: int, min_total_mentions: int = 0) -> List[TopicSummary]:
+    def top_topics_since(
+        self,
+        since_ts: int,
+        limit: int,
+        min_total_mentions: int = 0,
+        market_scope: str | None = None,
+    ) -> List[TopicSummary]:
+        scope_clause = ""
+        params: list[object] = [since_ts]
+        if market_scope:
+            if market_scope == "sweden":
+                scope_clause = "AND (market_scope = ? OR market_scope = 'mixed')"
+            else:
+                scope_clause = "AND market_scope = ?"
+            params.append(market_scope)
+        params.extend([min_total_mentions, limit])
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT
                     cluster_key,
                     MAX(cluster_label) AS cluster_label,
                     MAX(example_title) AS example_title,
                     MAX(category) AS category,
+                    MAX(market_scope) AS market_scope,
                     SUM(total_mentions) AS total_mentions,
                     COUNT(*) AS samples,
                     MAX(observed_at) AS latest_observed_at,
                     MAX(source_count) AS source_count,
                     AVG(trend_score) AS avg_trend_score
                 FROM topic_rollups
-                WHERE observed_at >= ?
+                WHERE observed_at >= ? {scope_clause}
                 GROUP BY cluster_key
                 HAVING SUM(total_mentions) >= ?
                 ORDER BY total_mentions DESC, latest_observed_at DESC
                 LIMIT ?
                 """,
-                (since_ts, min_total_mentions, limit),
+                tuple(params),
             ).fetchall()
 
         return [
@@ -327,35 +359,53 @@ class Storage:
                 trend_score=float(row["avg_trend_score"] or 0.0),
                 source_count=int(row["source_count"] or 0),
                 example_title=row["example_title"] or "",
+                market_scope=row["market_scope"] or "mixed",
             )
             for row in rows
         ]
 
-    def top_categories_since(self, since_ts: int, limit: int) -> List[CategorySummary]:
+    def top_categories_since(self, since_ts: int, limit: int, market_scope: str | None = None) -> List[CategorySummary]:
+        scope_clause = ""
+        params: list[object] = [since_ts]
+        if market_scope:
+            if market_scope == "sweden":
+                scope_clause = "AND (market_scope = ? OR market_scope = 'mixed')"
+            else:
+                scope_clause = "AND market_scope = ?"
+            params.append(market_scope)
+        params.append(limit)
         with self._connect() as conn:
             category_rows = conn.execute(
-                """
+                f"""
                 SELECT
                     category,
                     SUM(total_mentions) AS total_mentions,
                     COUNT(*) AS samples,
                     MAX(observed_at) AS latest_observed_at
                 FROM topic_rollups
-                WHERE observed_at >= ?
+                WHERE observed_at >= ? {scope_clause}
                 GROUP BY category
                 ORDER BY total_mentions DESC, latest_observed_at DESC
                 LIMIT ?
                 """,
-                (since_ts, limit),
+                tuple(params),
             ).fetchall()
+            topic_params: list[object] = [since_ts]
+            topic_scope_clause = ""
+            if market_scope:
+                if market_scope == "sweden":
+                    topic_scope_clause = "AND (market_scope = ? OR market_scope = 'mixed')"
+                else:
+                    topic_scope_clause = "AND market_scope = ?"
+                topic_params.append(market_scope)
             top_topics = conn.execute(
-                """
+                f"""
                 SELECT category, topic, SUM(total_mentions) AS topic_mentions
                 FROM topic_rollups
-                WHERE observed_at >= ?
+                WHERE observed_at >= ? {topic_scope_clause}
                 GROUP BY category, topic
                 """,
-                (since_ts,),
+                tuple(topic_params),
             ).fetchall()
 
         best_topic_by_category: dict[str, tuple[str, int]] = {}
@@ -379,27 +429,37 @@ class Storage:
             for row in category_rows
         ]
 
-    def top_clusters_since(self, since_ts: int, limit: int) -> List[ClusterSummary]:
+    def top_clusters_since(self, since_ts: int, limit: int, market_scope: str | None = None) -> List[ClusterSummary]:
+        scope_clause = ""
+        params: list[object] = [since_ts]
+        if market_scope:
+            if market_scope == "sweden":
+                scope_clause = "AND (market_scope = ? OR market_scope = 'mixed')"
+            else:
+                scope_clause = "AND market_scope = ?"
+            params.append(market_scope)
+        params.append(limit)
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT
                     cluster_key,
                     MAX(cluster_label) AS cluster_label,
                     MAX(example_title) AS example_title,
                     MAX(category) AS category,
+                    MAX(market_scope) AS market_scope,
                     SUM(total_mentions) AS total_mentions,
                     COUNT(*) AS samples,
                     MAX(observed_at) AS latest_observed_at,
                     COUNT(DISTINCT topic) AS topic_count,
                     AVG(trend_score) AS avg_trend_score
                 FROM topic_rollups
-                WHERE observed_at >= ? AND cluster_key <> ''
+                WHERE observed_at >= ? AND cluster_key <> '' {scope_clause}
                 GROUP BY cluster_key
                 ORDER BY total_mentions DESC, latest_observed_at DESC
                 LIMIT ?
                 """,
-                (since_ts, limit),
+                tuple(params),
             ).fetchall()
         return [
             ClusterSummary(
@@ -412,6 +472,7 @@ class Storage:
                 latest_observed_at=int(row["latest_observed_at"] or 0),
                 topic_count=int(row["topic_count"] or 0),
                 trend_score=min(100.0, round(float(row["avg_trend_score"] or 0.0), 1)),
+                market_scope=row["market_scope"] or "mixed",
             )
             for row in rows
         ]
@@ -514,7 +575,7 @@ class Storage:
             rows = conn.execute(
                 """
                 SELECT topic, observed_at, total_mentions, source_count,
-                       category, cluster_key, cluster_label, trend_score, example_title
+                       category, cluster_key, cluster_label, trend_score, example_title, market_scope
                 FROM topic_rollups
                 ORDER BY observed_at DESC, id DESC
                 LIMIT ?
@@ -532,6 +593,7 @@ class Storage:
                 cluster_label=row["cluster_label"],
                 trend_score=float(row["trend_score"] or 0.0),
                 example_title=row["example_title"],
+                market_scope=row["market_scope"] or "mixed",
             )
             for row in rows
         ]

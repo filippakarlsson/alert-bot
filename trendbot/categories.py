@@ -13,12 +13,33 @@ CATEGORY_COLORS = {
 
 def categorize_topic(topic: str) -> str:
     lowered = topic.lower()
+    if any(
+        term in lowered
+        for term in {
+            "politics",
+            "political",
+            "election",
+            "government",
+            "congress",
+            "parliament",
+            "president",
+            "prime minister",
+            "white house",
+            "senate",
+            "mp",
+            "trump",
+            "biden",
+            "putin",
+            "zelensky",
+            "netanyahu",
+            "erdogan",
+        }
+    ):
+        return "politics"
     if any(term in lowered for term in {"pop culture", "celebrity", "movie", "movies", "tv", "film", "festival", "award"}):
         return "pop_culture"
     if any(term in lowered for term in {"music", "k-pop", "eurovision", "album", "song", "artist", "tour"}):
         return "music"
-    if any(term in lowered for term in {"politics", "election", "government", "congress", "president", "political"}):
-        return "politics"
     if any(term in lowered for term in {"news", "breaking", "world", "update", "headline"}):
         return "news"
     if any(term in lowered for term in {"tiktok", "youtube", "influencer", "streamer", "streamers", "memes", "viral", "internet", "creator", "creator economy"}):

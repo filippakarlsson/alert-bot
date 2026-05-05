@@ -63,11 +63,17 @@ class Config:
     pop_culture_min_baseline: int
     reddit_limit: int
     reddit_timeout_seconds: int
+    reddit_refresh_seconds: int
+    reddit_request_delay_seconds: float
+    reddit_backoff_seconds: int
+    rss_refresh_seconds: int
     google_news_hl: str
     google_news_gl: str
     google_news_ceid: str
     google_news_recency_query: str
     max_item_age_hours: int
+    require_item_timestamp: bool
+    skip_previous_year_titles: bool
     enable_source_google_se: bool
     enable_source_google_global: bool
     enable_source_bbc: bool
@@ -76,11 +82,17 @@ class Config:
     enable_source_variety: bool
     enable_source_billboard: bool
     enable_source_the_verge: bool
+    enable_source_people: bool
+    enable_source_eonline: bool
+    enable_source_tmz: bool
+    enable_source_rollingstone: bool
     enable_source_aftonbladet: bool
     enable_source_expressen: bool
     enable_source_hant: bool
+    enable_source_hant_extra: bool
     enable_source_svt: bool
     enable_source_tv4: bool
+    enable_source_tiktok: bool
     db_path: str
 
 
@@ -130,11 +142,17 @@ def load_config() -> Config:
         pop_culture_min_baseline=int(os.getenv("POP_CULTURE_MIN_BASELINE", "1")),
         reddit_limit=int(os.getenv("REDDIT_LIMIT", "25")),
         reddit_timeout_seconds=int(os.getenv("REDDIT_TIMEOUT_SECONDS", "15")),
+        reddit_refresh_seconds=int(os.getenv("REDDIT_REFRESH_SECONDS", "900")),
+        reddit_request_delay_seconds=float(os.getenv("REDDIT_REQUEST_DELAY_SECONDS", "1.2")),
+        reddit_backoff_seconds=int(os.getenv("REDDIT_BACKOFF_SECONDS", "1800")),
+        rss_refresh_seconds=int(os.getenv("RSS_REFRESH_SECONDS", "300")),
         google_news_hl=os.getenv("GOOGLE_NEWS_HL", "en-US").strip(),
         google_news_gl=os.getenv("GOOGLE_NEWS_GL", "US").strip(),
         google_news_ceid=os.getenv("GOOGLE_NEWS_CEID", "US:en").strip(),
         google_news_recency_query=os.getenv("GOOGLE_NEWS_RECENCY_QUERY", "when:2d").strip(),
         max_item_age_hours=int(os.getenv("MAX_ITEM_AGE_HOURS", "72")),
+        require_item_timestamp=_bool_env("REQUIRE_ITEM_TIMESTAMP", "true"),
+        skip_previous_year_titles=_bool_env("SKIP_PREVIOUS_YEAR_TITLES", "true"),
         enable_source_google_se=_bool_env("ENABLE_SOURCE_GOOGLE_SE", "true"),
         enable_source_google_global=_bool_env("ENABLE_SOURCE_GOOGLE_GLOBAL", "true"),
         enable_source_bbc=_bool_env("ENABLE_SOURCE_BBC", "true"),
@@ -143,10 +161,16 @@ def load_config() -> Config:
         enable_source_variety=_bool_env("ENABLE_SOURCE_VARIETY", "true"),
         enable_source_billboard=_bool_env("ENABLE_SOURCE_BILLBOARD", "true"),
         enable_source_the_verge=_bool_env("ENABLE_SOURCE_THE_VERGE", "true"),
+        enable_source_people=_bool_env("ENABLE_SOURCE_PEOPLE", "true"),
+        enable_source_eonline=_bool_env("ENABLE_SOURCE_EONLINE", "true"),
+        enable_source_tmz=_bool_env("ENABLE_SOURCE_TMZ", "true"),
+        enable_source_rollingstone=_bool_env("ENABLE_SOURCE_ROLLINGSTONE", "true"),
         enable_source_aftonbladet=_bool_env("ENABLE_SOURCE_AFTONBLADET", "true"),
         enable_source_expressen=_bool_env("ENABLE_SOURCE_EXPRESSEN", "true"),
         enable_source_hant=_bool_env("ENABLE_SOURCE_HANT", "true"),
+        enable_source_hant_extra=_bool_env("ENABLE_SOURCE_HANT_EXTRA", "false"),
         enable_source_svt=_bool_env("ENABLE_SOURCE_SVT", "true"),
         enable_source_tv4=_bool_env("ENABLE_SOURCE_TV4", "true"),
+        enable_source_tiktok=_bool_env("ENABLE_SOURCE_TIKTOK", "false"),
         db_path=os.getenv("TRENDBOT_DB_PATH", "trendbot.sqlite3"),
     )
