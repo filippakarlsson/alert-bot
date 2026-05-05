@@ -989,8 +989,20 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>TrendBot Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
+      color-scheme: light;
+      --bg: #f4efe9;
+      --panel: #fffaf4;
+      --muted: #6b6258;
+      --text: #1f1a17;
+      --line: #e4d9cc;
+      --accent: #d4672f;
+    }
+    body.theme-light {
       color-scheme: dark;
       --bg: #0f172a;
       --panel: #111827;
@@ -999,23 +1011,14 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       --line: #243244;
       --accent: #f59e0b;
     }
-    body.theme-light {
-      color-scheme: light;
-      --bg: #f8fafc;
-      --panel: #ffffff;
-      --muted: #475569;
-      --text: #0f172a;
-      --line: #cbd5e1;
-      --accent: #ea580c;
-    }
     body {
       margin: 0;
-      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: radial-gradient(circle at top, #1e293b 0, #0f172a 55%);
+      font-family: "Manrope", Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #f9f3ed 0, #f4efe9 55%);
       color: var(--text);
     }
     body.theme-light {
-      background: radial-gradient(circle at top, #e2e8f0 0, #f8fafc 55%);
+      background: radial-gradient(circle at top, #1e293b 0, #0f172a 55%);
     }
     header {
       padding: 20px 24px 12px;
@@ -1033,9 +1036,9 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       gap: 8px;
     }
     .nav-link {
-      border: 1px solid rgba(148, 163, 184, 0.26);
-      background: rgba(15, 23, 42, 0.9);
-      color: #e2e8f0;
+      border: 1px solid #d9c9b7;
+      background: #fff8f2;
+      color: #2b2118;
       border-radius: 10px;
       padding: 8px 10px;
       font-size: 13px;
@@ -1048,9 +1051,9 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       text-decoration: none;
     }
     body.theme-light .nav-link {
-      background: #ffffff;
-      color: #0f172a;
-      border-color: #cbd5e1;
+      border: 1px solid rgba(148, 163, 184, 0.26);
+      background: rgba(15, 23, 42, 0.9);
+      color: #e2e8f0;
     }
     body.theme-light .nav-link.active,
     body.theme-light .nav-link:hover {
@@ -1063,17 +1066,17 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
     .grid.wide { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
     .card {
-      background: rgba(15, 23, 42, 0.82);
-      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(255, 250, 244, 0.96);
+      border: 1px solid #e8dccf;
       border-radius: 18px;
       padding: 18px;
-      box-shadow: 0 20px 60px rgba(0,0,0,.25);
-      backdrop-filter: blur(12px);
+      box-shadow: 0 10px 28px rgba(79, 49, 24, 0.08);
+      backdrop-filter: blur(8px);
     }
     body.theme-light .card {
-      background: rgba(255, 255, 255, 0.94);
-      border: 1px solid #cbd5e1;
-      box-shadow: 0 12px 30px rgba(2, 6, 23, 0.08);
+      background: rgba(15, 23, 42, 0.82);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      box-shadow: 0 20px 60px rgba(0,0,0,.25);
     }
     h2 { margin: 0 0 12px; font-size: 18px; }
     ol, ul { margin: 0; padding-left: 20px; }
@@ -1160,7 +1163,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       display: inline-flex;
       align-items: center;
       min-width: 0;
-      color: #cbd5e1;
+      color: var(--text);
       font-size: 13px;
     }
     .legend-value {
@@ -1176,18 +1179,18 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       margin-bottom: 8px;
     }
     .control-select, .control-btn {
-      border: 1px solid rgba(148, 163, 184, 0.26);
-      background: rgba(15, 23, 42, 0.9);
-      color: #e2e8f0;
+      border: 1px solid #d9c9b7;
+      background: #fff8f2;
+      color: #2b2118;
       border-radius: 10px;
       padding: 8px 10px;
       font-size: 13px;
     }
     body.theme-light .control-select, 
     body.theme-light .control-btn {
-      background: #ffffff;
-      color: #0f172a;
-      border-color: #cbd5e1;
+      border: 1px solid rgba(148, 163, 184, 0.26);
+      background: rgba(15, 23, 42, 0.9);
+      color: #e2e8f0;
     }
     .control-select {
       flex: 1;
@@ -1331,18 +1334,18 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       margin-top: 8px;
     }
     .filter-btn {
-      border: 1px solid rgba(148, 163, 184, 0.26);
-      background: rgba(15, 23, 42, 0.9);
-      color: #e2e8f0;
+      border: 1px solid #d9c9b7;
+      background: #fff8f2;
+      color: #2b2118;
       border-radius: 999px;
       padding: 6px 10px;
       font-size: 12px;
       cursor: pointer;
     }
     body.theme-light .filter-btn {
-      background: #ffffff;
-      color: #0f172a;
-      border-color: #cbd5e1;
+      border: 1px solid rgba(148, 163, 184, 0.26);
+      background: rgba(15, 23, 42, 0.9);
+      color: #e2e8f0;
     }
     .filter-btn.active {
       border-color: rgba(245, 158, 11, 0.55);
@@ -1860,21 +1863,22 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       gl.classList.toggle('active', marketScope === 'global');
     }
     function applyTheme(theme) {
-      const isLight = theme === 'light';
-      document.body.classList.toggle('theme-light', isLight);
+      const isDark = theme === 'dark';
+      document.body.classList.toggle('theme-light', isDark);
       const btn = document.getElementById('theme-toggle');
-      if (btn) btn.textContent = isLight ? 'Dark mode' : 'Light mode';
+      if (btn) btn.textContent = isDark ? 'Orange mode' : 'Dark mode';
     }
     function initTheme() {
-      let theme = 'dark';
+      let theme = 'warm';
       try {
         const saved = localStorage.getItem(THEME_KEY);
-        if (saved === 'light' || saved === 'dark') theme = saved;
+        if (saved === 'warm' || saved === 'dark') theme = saved;
+        if (saved === 'light') theme = 'warm';
       } catch {}
       applyTheme(theme);
     }
     function toggleTheme() {
-      const next = document.body.classList.contains('theme-light') ? 'dark' : 'light';
+      const next = document.body.classList.contains('theme-light') ? 'warm' : 'dark';
       applyTheme(next);
       try { localStorage.setItem(THEME_KEY, next); } catch {}
     }
