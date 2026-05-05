@@ -1394,7 +1394,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     <div class="topbar">
       <h1>TrendBot Dashboard</h1>
       <nav class="nav-links">
-        <span id="role-badge" class="pill" style="margin-right:6px;">role: start</span>
+        <span id="role-badge" class="pill" style="margin-right:6px;">Plan: Start</span>
         <a id="nav-dashboard" class="nav-link" href="?">Dashboard</a>
         <a id="nav-topic" class="nav-link" href="?view=topic">Topic</a>
         <a id="nav-media" class="nav-link" data-min-role="pro" href="?view=media">Bilder</a>
@@ -1880,7 +1880,15 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     }
     function applyRoleUI() {
       const roleBadge = document.getElementById('role-badge');
-      if (roleBadge) roleBadge.textContent = `role: ${userRole}`;
+      if (roleBadge) {
+        const labelByRole = {
+          lite: 'Plan: Free',
+          start: 'Plan: Start',
+          pro: 'Plan: Pro',
+          admin: 'Plan: Admin',
+        };
+        roleBadge.textContent = labelByRole[userRole] || `Plan: ${userRole}`;
+      }
       const logoutBtn = document.getElementById('logout-btn');
       if (logoutBtn) logoutBtn.textContent = userRole === 'lite' ? 'Logga in' : 'Logga ut';
       document.querySelectorAll('[data-min-role]').forEach((el) => {
