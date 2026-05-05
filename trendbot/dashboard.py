@@ -1288,7 +1288,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     .login-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(2, 6, 23, 0.82);
+      background: rgba(23, 18, 15, 0.42);
       display: none;
       align-items: center;
       justify-content: center;
@@ -1297,22 +1297,38 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     }
     .login-card {
       width: min(420px, 100%);
-      background: rgba(15, 23, 42, 0.96);
-      border: 1px solid rgba(148, 163, 184, 0.24);
+      background: #fffaf4;
+      border: 1px solid #d9c9b7;
       border-radius: 16px;
       padding: 18px;
+      box-shadow: 0 20px 45px rgba(71, 44, 20, 0.14);
     }
+    .login-card .muted { color: #5b5045; }
     .login-input {
       width: 100%;
       box-sizing: border-box;
       margin-top: 8px;
-      border: 1px solid rgba(148, 163, 184, 0.26);
-      background: rgba(15, 23, 42, 0.9);
-      color: #e2e8f0;
+      border: 1px solid #d9c9b7;
+      background: #fff;
+      color: #1b1713;
       border-radius: 10px;
       padding: 10px;
       font-size: 14px;
     }
+    .login-input::placeholder { color: #8a7b6d; }
+    body.theme-light .login-overlay { background: rgba(2, 6, 23, 0.82); }
+    body.theme-light .login-card {
+      background: rgba(15, 23, 42, 0.96);
+      border: 1px solid rgba(148, 163, 184, 0.24);
+      box-shadow: 0 24px 50px rgba(0, 0, 0, 0.35);
+    }
+    body.theme-light .login-card .muted { color: #cbd5e1; }
+    body.theme-light .login-input {
+      border: 1px solid rgba(148, 163, 184, 0.26);
+      background: rgba(15, 23, 42, 0.9);
+      color: #e2e8f0;
+    }
+    body.theme-light .login-input::placeholder { color: #94a3b8; }
     .media-card {
       border: 1px solid rgba(148, 163, 184, 0.2);
       border-radius: 14px;
