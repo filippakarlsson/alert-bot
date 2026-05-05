@@ -1815,8 +1815,8 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     let lastSummary = null;
     let lastRecent = null;
     let marketScope = 'sweden';
-    let userRole = 'start';
-    const ROLE_RANK = { start: 1, pro: 2, admin: 3 };
+    let userRole = 'lite';
+    const ROLE_RANK = { lite: 0, start: 1, pro: 2, admin: 3 };
     let activeFilter = 'all';
     let activeWindowHours = 24;
     let currentTopicKey = '';
@@ -1881,12 +1881,14 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     function applyRoleUI() {
       const roleBadge = document.getElementById('role-badge');
       if (roleBadge) roleBadge.textContent = `role: ${userRole}`;
+      const logoutBtn = document.getElementById('logout-btn');
+      if (logoutBtn) logoutBtn.textContent = userRole === 'lite' ? 'Logga in' : 'Logga ut';
       document.querySelectorAll('[data-min-role]').forEach((el) => {
         const required = (el.getAttribute('data-min-role') || 'start').toLowerCase();
         const canSee = (ROLE_RANK[userRole] || 0) >= (ROLE_RANK[required] || 0);
         el.style.display = canSee ? '' : 'none';
       });
-      if (userRole === 'start' && marketScope === 'global') {
+      if ((userRole === 'start' || userRole === 'lite') && marketScope === 'global') {
         marketScope = 'sweden';
         applyScopeButtons();
       }
@@ -2328,9 +2330,15 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
           overlay.style.display = 'none';
           return true;
         }
+        userRole = 'lite';
+        applyRoleUI();
+        overlay.style.display = 'none';
+        return true;
       } catch (_err) {}
-      overlay.style.display = 'flex';
-      return false;
+      userRole = 'lite';
+      applyRoleUI();
+      overlay.style.display = 'none';
+      return true;
     }
     async function doLogin() {
       const username = (document.getElementById('login-username').value || '').trim();
@@ -2359,14 +2367,23 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       }
     }
     async function doLogout() {
+      if (userRole === 'lite') {
+        const status = document.getElementById('login-status');
+        if (status) status.textContent = '';
+        document.getElementById('login-overlay').style.display = 'flex';
+        return;
+      }
       try {
         await fetch('/api/logout', { method: 'POST', credentials: 'include' });
       } catch (_err) {}
+      userRole = 'lite';
+      applyRoleUI();
       const status = document.getElementById('login-status');
       if (status) status.textContent = '';
       const pw = document.getElementById('login-password');
       if (pw) pw.value = '';
-      document.getElementById('login-overlay').style.display = 'flex';
+      document.getElementById('login-overlay').style.display = 'none';
+      loadData();
     }
     function forceRefresh() {
       const url = new URL(window.location.href);
@@ -2512,9 +2529,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         askPostAI();
       }
     });
-    ensureAuth().then((ok) => {
-      if (ok) loadData();
-    });
+    ensureAuth().then(() => loadData());
     setInterval(loadData, 15000);
   </script>
 </body>
@@ -2533,12 +2548,16 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/me"):
             session = self._session_info()
             role = (session or {}).get("role")
-            self._send_json({"authenticated": bool(role), "role": role or "start"})
+            self._send_json({"authenticated": bool(role), "role": role or "lite"})
             return
         if self.path.startswith("/api/login"):
             self._send_json({"ok": False, "error": "Use POST for login"}, status=405)
             return
-        if self.path.startswith("/api/") and not self._is_authenticated():
+        is_public_api = any(
+            self.path.startswith(prefix)
+            for prefix in ("/api/summary", "/api/recent", "/api/media", "/api/brief")
+        )
+        if self.path.startswith("/api/") and not is_public_api and not self._is_authenticated():
             self._send_json({"ok": False, "error": "Unauthorized"}, status=401)
             return
         if self.path.startswith("/api/summary"):
@@ -2616,7 +2635,11 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/health"):
             self._send_headers("application/json; charset=utf-8", len(b'{"ok":true}'))
             return
-        if self.path.startswith("/api/") and not self.path.startswith("/api/me") and not self._is_authenticated():
+        is_public_api = any(
+            self.path.startswith(prefix)
+            for prefix in ("/api/me", "/api/summary", "/api/recent", "/api/media", "/api/brief")
+        )
+        if self.path.startswith("/api/") and not is_public_api and not self._is_authenticated():
             self._send_headers("application/json; charset=utf-8", 0, status=401)
             return
         if self.path.startswith("/api/summary"):
