@@ -989,17 +989,14 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>TrendBot Dashboard</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
       color-scheme: light;
       --bg: #f4efe9;
       --panel: #fffaf4;
-      --muted: #6b6258;
-      --text: #1f1a17;
-      --line: #e4d9cc;
+      --muted: #4d443a;
+      --text: #17120f;
+      --line: #d3c2af;
       --accent: #d4672f;
     }
     body.theme-light {
@@ -1013,7 +1010,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     }
     body {
       margin: 0;
-      font-family: "Manrope", Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: "Avenir Next", "SF Pro Text", "SF Pro Display", "Manrope", Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: radial-gradient(circle at top, #f9f3ed 0, #f4efe9 55%);
       color: var(--text);
     }
@@ -1060,8 +1057,21 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       border-color: #fb923c;
       color: #c2410c;
     }
-    h1 { margin: 0; font-size: 28px; }
-    p { color: var(--muted); margin: 8px 0 0; }
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: #121212;
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      color: #1a1511;
+    }
+    p { color: var(--muted); margin: 8px 0 0; font-weight: 600; }
     main { padding: 0 24px 32px; display: grid; gap: 18px; }
     .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
     .grid.wide { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
@@ -1078,7 +1088,6 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       border: 1px solid rgba(148, 163, 184, 0.18);
       box-shadow: 0 20px 60px rgba(0,0,0,.25);
     }
-    h2 { margin: 0 0 12px; font-size: 18px; }
     ol, ul { margin: 0; padding-left: 20px; }
     li { margin: 8px 0; }
     .pill {
@@ -1090,13 +1099,13 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       font-size: 12px;
       margin-left: 8px;
     }
-    .muted { color: var(--muted); font-size: 13px; }
+    .muted { color: var(--muted); font-size: 13px; font-weight: 600; }
     .row { display: flex; justify-content: space-between; gap: 12px; }
     .topic {
       font-weight: 600;
     }
     .score { color: #fbbf24; font-variant-numeric: tabular-nums; }
-    .source { color: #60a5fa; font-size: 12px; }
+    .source { color: #3b82f6; font-size: 12px; font-weight: 700; }
     .badge {
       display: inline-block;
       width: 10px; height: 10px; border-radius: 999px;
@@ -1181,10 +1190,11 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     .control-select, .control-btn {
       border: 1px solid #d9c9b7;
       background: #fff8f2;
-      color: #2b2118;
+      color: #241a12;
       border-radius: 10px;
       padding: 8px 10px;
       font-size: 13px;
+      font-weight: 700;
     }
     body.theme-light .control-select, 
     body.theme-light .control-btn {
@@ -1336,10 +1346,11 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     .filter-btn {
       border: 1px solid #d9c9b7;
       background: #fff8f2;
-      color: #2b2118;
+      color: #241a12;
       border-radius: 999px;
       padding: 6px 10px;
       font-size: 12px;
+      font-weight: 700;
       cursor: pointer;
     }
     body.theme-light .filter-btn {
@@ -1359,11 +1370,12 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     }
     .why-chip {
       font-size: 11px;
-      color: #fde68a;
-      background: rgba(245, 158, 11, 0.14);
-      border: 1px solid rgba(245, 158, 11, 0.28);
+      color: #a44a1e;
+      background: #fff1df;
+      border: 1px solid #f0caa2;
       border-radius: 999px;
       padding: 3px 8px;
+      font-weight: 700;
     }
     .topic-page {
       display: none;
