@@ -2689,23 +2689,22 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         }
 
     def _verify_password(self, provided: str, stored: str) -> bool:
-        # Preferred format:
+        # Strict format only:
         # pbkdf2_sha256$<iterations>$<salt>$<hex_digest>
-        if stored.startswith("pbkdf2_sha256$"):
-            try:
-                _, iter_s, salt, digest_hex = stored.split("$", 3)
-                iterations = int(iter_s)
-                calculated = hashlib.pbkdf2_hmac(
-                    "sha256",
-                    provided.encode("utf-8"),
-                    salt.encode("utf-8"),
-                    iterations,
-                ).hex()
-                return hmac.compare_digest(calculated, digest_hex)
-            except Exception:
-                return False
-        # Backward-compatible fallback (plain text). Prefer hashed values in .env.
-        return hmac.compare_digest(provided, stored)
+        if not stored.startswith("pbkdf2_sha256$"):
+            return False
+        try:
+            _, iter_s, salt, digest_hex = stored.split("$", 3)
+            iterations = int(iter_s)
+            calculated = hashlib.pbkdf2_hmac(
+                "sha256",
+                provided.encode("utf-8"),
+                salt.encode("utf-8"),
+                iterations,
+            ).hex()
+            return hmac.compare_digest(calculated, digest_hex)
+        except Exception:
+            return False
 
     def _session_token(self) -> str:
         cookie = self.headers.get("Cookie", "")
