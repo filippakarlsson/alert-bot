@@ -1071,6 +1071,10 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       letter-spacing: -0.01em;
       color: #1a1511;
     }
+    body.theme-light h1,
+    body.theme-light h2 {
+      color: #f8fafc;
+    }
     p { color: var(--muted); margin: 8px 0 0; font-weight: 600; }
     main { padding: 0 24px 32px; display: grid; gap: 18px; }
     .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
