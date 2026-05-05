@@ -88,6 +88,7 @@ def _trigger_score(current: int, baseline: float, multiplier: float, min_baselin
 def _build_fetchers(config):
     recency_suffix = config.google_news_recency_query
     fetchers = []
+    swedish_only = config.swedish_only_mode
 
     if config.enable_source_google_se:
         google_news_se = GoogleNewsFetcher(
@@ -101,7 +102,7 @@ def _build_fetchers(config):
         google_news_se.source_name = "google_news_se"
         fetchers.append(google_news_se)
 
-    if config.enable_source_google_global:
+    if (not swedish_only) and config.enable_source_google_global:
         google_news_global = GoogleNewsFetcher(
             limit=config.reddit_limit,
             timeout_seconds=config.reddit_timeout_seconds,
@@ -113,7 +114,7 @@ def _build_fetchers(config):
         google_news_global.source_name = "google_news_global"
         fetchers.append(google_news_global)
 
-    if config.enable_source_bbc:
+    if (not swedish_only) and config.enable_source_bbc:
         fetchers.append(
             RSSFetcher(
                 source_name="bbc_entertainment",
@@ -123,7 +124,7 @@ def _build_fetchers(config):
                 refresh_seconds=config.rss_refresh_seconds,
             )
         )
-    if config.enable_source_npr:
+    if (not swedish_only) and config.enable_source_npr:
         fetchers.append(
             RSSFetcher(
                 source_name="npr_music",
@@ -133,7 +134,7 @@ def _build_fetchers(config):
                 refresh_seconds=config.rss_refresh_seconds,
             )
         )
-    if config.enable_source_ap:
+    if (not swedish_only) and config.enable_source_ap:
         fetchers.append(
             RSSFetcher(
                 source_name="ap_entertainment",
@@ -143,7 +144,7 @@ def _build_fetchers(config):
                 refresh_seconds=config.rss_refresh_seconds,
             )
         )
-    if config.enable_source_variety:
+    if (not swedish_only) and config.enable_source_variety:
         fetchers.append(
             RSSFetcher(
                 source_name="variety",
@@ -153,7 +154,7 @@ def _build_fetchers(config):
                 refresh_seconds=config.rss_refresh_seconds,
             )
         )
-    if config.enable_source_billboard:
+    if (not swedish_only) and config.enable_source_billboard:
         fetchers.append(
             RSSFetcher(
                 source_name="billboard",
@@ -163,7 +164,7 @@ def _build_fetchers(config):
                 refresh_seconds=config.rss_refresh_seconds,
             )
         )
-    if config.enable_source_the_verge:
+    if (not swedish_only) and config.enable_source_the_verge:
         fetchers.append(
             RSSFetcher(
                 source_name="the_verge",
@@ -173,7 +174,7 @@ def _build_fetchers(config):
                 refresh_seconds=config.rss_refresh_seconds,
             )
         )
-    if config.enable_source_people:
+    if (not swedish_only) and config.enable_source_people:
         fetchers.append(
             RSSFetcher(
                 source_name="people",
@@ -183,7 +184,7 @@ def _build_fetchers(config):
                 refresh_seconds=config.rss_refresh_seconds,
             )
         )
-    if config.enable_source_eonline:
+    if (not swedish_only) and config.enable_source_eonline:
         fetchers.append(
             RSSFetcher(
                 source_name="eonline",
@@ -193,7 +194,7 @@ def _build_fetchers(config):
                 refresh_seconds=config.rss_refresh_seconds,
             )
         )
-    if config.enable_source_tmz:
+    if (not swedish_only) and config.enable_source_tmz:
         fetchers.append(
             RSSFetcher(
                 source_name="tmz",
@@ -203,7 +204,7 @@ def _build_fetchers(config):
                 refresh_seconds=config.rss_refresh_seconds,
             )
         )
-    if config.enable_source_rollingstone:
+    if (not swedish_only) and config.enable_source_rollingstone:
         fetchers.append(
             RSSFetcher(
                 source_name="rolling_stone",
@@ -283,14 +284,14 @@ def _build_fetchers(config):
         tiktok = GoogleNewsFetcher(
             limit=config.reddit_limit,
             timeout_seconds=config.reddit_timeout_seconds,
-            hl="en-US",
-            gl="US",
-            ceid="US:en",
+            hl="sv-SE" if swedish_only else "en-US",
+            gl="SE" if swedish_only else "US",
+            ceid="SE:sv" if swedish_only else "US:en",
             query_suffix=f"site:tiktok.com {recency_suffix}".strip(),
         )
         tiktok.source_name = "tiktok_web"
         fetchers.append(tiktok)
-    if config.reddit_enabled:
+    if (not swedish_only) and config.reddit_enabled:
         fetchers.insert(
             0,
             RedditFetcher(
@@ -592,6 +593,7 @@ def update_snapshot(storage: Storage, config) -> None:
                 "daily_series_window_seconds": config.daily_series_window_seconds,
                 "alert_count_offset": config.alert_count_offset,
                 "blocked_terms": config.blocked_terms,
+                "swedish_only_mode": config.swedish_only_mode,
                 "dashboard_admin_password": os.getenv("DASHBOARD_ADMIN_PASSWORD", "").strip(),
                 "dashboard_start_password": os.getenv("DASHBOARD_START_PASSWORD", "").strip(),
                 "dashboard_pro_password": os.getenv("DASHBOARD_PRO_PASSWORD", "").strip(),
@@ -638,6 +640,7 @@ def main() -> None:
                     "daily_series_window_seconds": config.daily_series_window_seconds,
                     "alert_count_offset": config.alert_count_offset,
                     "blocked_terms": config.blocked_terms,
+                    "swedish_only_mode": config.swedish_only_mode,
                     "dashboard_admin_password": os.getenv("DASHBOARD_ADMIN_PASSWORD", "").strip(),
                     "dashboard_start_password": os.getenv("DASHBOARD_START_PASSWORD", "").strip(),
                     "dashboard_pro_password": os.getenv("DASHBOARD_PRO_PASSWORD", "").strip(),

@@ -1425,7 +1425,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       <h2>Filters <span class="pill">live view</span></h2>
       <div class="filter-row">
         <button id="scope-sweden" class="filter-btn active" type="button">Sweden</button>
-        <button id="scope-global" class="filter-btn" data-min-role="pro" type="button">Global / America</button>
+        <button id="scope-global" class="filter-btn" data-min-role="start" type="button">Global / America</button>
       </div>
       <div class="filter-row">
         <button class="filter-btn active" data-filter="all" type="button">Allt</button>
@@ -2060,7 +2060,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       await loadData();
     });
     document.getElementById('scope-global').addEventListener('click', async () => {
-      if ((ROLE_RANK[userRole] || 0) < (ROLE_RANK.pro || 1)) {
+      if ((ROLE_RANK[userRole] || 0) < (ROLE_RANK.start || 1)) {
         marketScope = 'sweden';
         applyScopeButtons();
         return;
@@ -2692,9 +2692,13 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self._send_headers("text/html; charset=utf-8", len(body))
 
     def _summary_payload(self, market_scope: str | None = None) -> dict[str, Any]:
+        if self.settings.get("swedish_only_mode") and market_scope == "global":
+            market_scope = "sweden"
         return _summary_payload(self.storage, self.settings, market_scope)
 
     def _recent_payload(self, market_scope: str | None = None) -> dict[str, Any]:
+        if self.settings.get("swedish_only_mode") and market_scope == "global":
+            market_scope = "sweden"
         return _recent_payload(self.storage, market_scope)
 
     def _auth_credentials(self) -> dict[str, str]:

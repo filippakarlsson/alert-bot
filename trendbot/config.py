@@ -72,6 +72,7 @@ class Config:
     google_news_gl: str
     google_news_ceid: str
     google_news_recency_query: str
+    swedish_only_mode: bool
     max_item_age_hours: int
     require_item_timestamp: bool
     skip_previous_year_titles: bool
@@ -151,6 +152,7 @@ def load_config() -> Config:
         google_news_gl=os.getenv("GOOGLE_NEWS_GL", "US").strip(),
         google_news_ceid=os.getenv("GOOGLE_NEWS_CEID", "US:en").strip(),
         google_news_recency_query=os.getenv("GOOGLE_NEWS_RECENCY_QUERY", "when:2d").strip(),
+        swedish_only_mode=_bool_env("SWEDISH_ONLY_MODE", "true"),
         max_item_age_hours=int(os.getenv("MAX_ITEM_AGE_HOURS", "72")),
         require_item_timestamp=_bool_env("REQUIRE_ITEM_TIMESTAMP", "true"),
         skip_previous_year_titles=_bool_env("SKIP_PREVIOUS_YEAR_TITLES", "true"),
