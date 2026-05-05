@@ -1934,6 +1934,9 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     function topicLink(item) {
       return `?view=topic&key=${encodeURIComponent(item.cluster_key || '')}`;
     }
+    function canOpenTopic() {
+      return (ROLE_RANK[userRole] || 0) >= (ROLE_RANK.start || 1);
+    }
     function getWatchlist() {
       try {
         const raw = localStorage.getItem(WATCHLIST_KEY);
@@ -2027,7 +2030,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
               <span class="source">${item.category}</span>
             </div>
             <div class="row" style="align-items:center;">
-              <a class="secondary-btn" href="${topicLink(item)}">Open topic</a>
+              ${canOpenTopic() ? `<a class="secondary-btn" href="${topicLink(item)}">Open topic</a>` : ``}
               <div class="score">${item.trend_score.toFixed(1)}</div>
             </div>
           </div>
@@ -2227,7 +2230,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
               <span class="source">${item.category}</span>
             </div>
             <div class="row" style="align-items:center;">
-              <a class="secondary-btn" href="${topicLink(item)}">Open topic</a>
+              ${canOpenTopic() ? `<a class="secondary-btn" href="${topicLink(item)}">Open topic</a>` : ``}
               <div class="score">${item.total_mentions}</div>
             </div>
           </div>
@@ -2495,8 +2498,9 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       const params = new URLSearchParams(window.location.search || '');
       const requestedView = (params.get('view') || '').toLowerCase();
       const isProOrHigher = (ROLE_RANK[userRole] || 0) >= (ROLE_RANK.pro || 1);
+      const isStartOrHigher = (ROLE_RANK[userRole] || 0) >= (ROLE_RANK.start || 1);
       const mediaMode = requestedView === 'media' && isProOrHigher;
-      const topicMode = requestedView === 'topic';
+      const topicMode = requestedView === 'topic' && isStartOrHigher;
       const dashboardPage = document.getElementById('dashboard-page');
       const mediaPage = document.getElementById('media-page');
       const topicPage = document.getElementById('topic-page');
@@ -2507,6 +2511,12 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         const clean = new URL(window.location.href);
         clean.searchParams.delete('view');
         clean.searchParams.delete('topic');
+        window.history.replaceState({}, '', clean.toString());
+      }
+      if (!isStartOrHigher && requestedView === 'topic') {
+        const clean = new URL(window.location.href);
+        clean.searchParams.delete('view');
+        clean.searchParams.delete('key');
         window.history.replaceState({}, '', clean.toString());
       }
       if (mediaMode) {
