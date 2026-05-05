@@ -28,7 +28,8 @@ def _load_dotenv(path: str = ".env") -> None:
         key, value = stripped.split("=", 1)
         key = key.strip()
         value = value.strip().strip("'").strip('"')
-        if key:
+        if key and key not in os.environ:
+            # Never override platform-provided env vars (Render, etc.).
             os.environ[key] = value
 
 
