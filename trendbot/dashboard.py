@@ -518,7 +518,7 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
                 "category": row.category,
                 "cluster_label": row.cluster_label,
                 "source_count": row.source_count,
-                "link": f"https://news.google.com/search?q={quote_plus(_best_cluster_label(row.cluster_key, row.cluster_label, row.example_title, row.topic))}",
+                "link": f"https://www.google.com/search?q={quote_plus(_best_cluster_label(row.cluster_key, row.cluster_label, row.example_title, row.topic))}",
             }
             for row in top_topics
         ],
@@ -535,7 +535,7 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
                 "category": row.category,
                 "cluster_label": row.cluster_label,
                 "source_count": row.source_count,
-                "link": f"https://news.google.com/search?q={quote_plus(_best_cluster_label(row.cluster_key, row.cluster_label, row.example_title, row.topic))}",
+                "link": f"https://www.google.com/search?q={quote_plus(_best_cluster_label(row.cluster_key, row.cluster_label, row.example_title, row.topic))}",
             }
             for row in hot_topics
         ],
