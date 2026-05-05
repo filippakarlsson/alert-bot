@@ -1441,8 +1441,8 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         <h2>Hot Mentions <span class="pill">fast • last 60m</span></h2>
         <ol id="hot-topics"><li class="muted">Loading...</li></ol>
       </section>
-      <section class="card" data-min-role="pro">
-        <h2>Category Movers <span class="pill">top categories</span></h2>
+      <section class="card" data-min-role="lite">
+        <h2>Topic Rank <span class="pill">färgade kategorier</span></h2>
         <div id="categories"><div class="muted">Loading...</div></div>
       </section>
       <section class="card" data-min-role="lite">
