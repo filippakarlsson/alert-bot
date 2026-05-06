@@ -59,6 +59,177 @@ SOURCE_ONLY_LABELS = {
 }
 
 
+def _render_legal_page(title: str, eyebrow: str, intro: str, sections_html: str) -> str:
+    return f"""<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{html.escape(title)} - TrendBot</title>
+  <style>
+    body {{
+      margin: 0;
+      background: #ebe5de;
+      color: #171616;
+      font-family: "Avenir Next", "SF Pro Text", "SF Pro Display", Inter, system-ui, -apple-system, sans-serif;
+    }}
+    .wrap {{ max-width: 1100px; margin: 0 auto; padding: 36px 20px 56px; }}
+    .back {{ color: #6a6258; text-decoration: none; font-size: 18px; }}
+    .eyebrow {{ margin-top: 10px; color: #d54e1f; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }}
+    h1 {{ margin: 18px 0 12px; font-size: 72px; line-height: .95; letter-spacing: -0.03em; }}
+    .intro {{ color: #625b54; font-size: 22px; line-height: 1.5; max-width: 980px; }}
+    .card {{
+      margin-top: 26px;
+      background: #f7f4f0;
+      border: 1px solid #ddd2c5;
+      border-radius: 28px;
+      padding: 28px 28px;
+    }}
+    h2 {{ margin: 0 0 12px; font-size: 46px; letter-spacing: -0.03em; }}
+    h3 {{ margin: 22px 0 8px; font-size: 30px; letter-spacing: -0.02em; }}
+    p, li {{ font-size: 18px; line-height: 1.7; color: #625b54; }}
+    code {{ background: #efe6db; padding: 2px 8px; border-radius: 8px; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+    th, td {{ border-bottom: 1px solid #ddd2c5; text-align: left; padding: 10px 8px; vertical-align: top; }}
+    th {{ color: #2a2119; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="back" href="/">Tillbaka till TrendBot</a>
+    <div class="eyebrow">{html.escape(eyebrow)}</div>
+    <h1>{html.escape(title)}</h1>
+    <p class="intro">{html.escape(intro)}</p>
+    <div class="card">{sections_html}</div>
+  </div>
+</body>
+</html>"""
+
+
+def _render_privacy_page() -> str:
+    sections = """
+      <h2>Integritetspolicy</h2>
+      <p>Denna policy gäller TrendBot Dashboard. Vi behandlar personuppgifter enligt GDPR och svensk dataskyddslagstiftning.</p>
+      <h3>1. Personuppgiftsansvarig</h3>
+      <p><strong>Personuppgiftsansvarig:</strong> TrendBot (ägare av tjänsten).<br />
+      <strong>Kontakt:</strong> ange din support-e-post här (exempel: privacy@trendradarn.se).</p>
+      <h3>2. Vilka uppgifter vi behandlar</h3>
+      <ul>
+        <li>Inloggningsuppgifter: användarnamn och hash-verifiering av lösenord.</li>
+        <li>Tekniska uppgifter: sessionsidentifierare, säkerhetsloggar (inloggningsförsök, fel, missbruksskydd).</li>
+        <li>Användarval: tema, watchlist och samtyckesval (lokalt i webbläsaren).</li>
+      </ul>
+      <h3>3. Ändamål och rättslig grund (GDPR art. 6)</h3>
+      <ul>
+        <li>Tillhandahålla tjänsten och inloggning: <strong>avtal</strong> (art. 6.1 b).</li>
+        <li>Säkerhet, missbruksförebyggande och drift: <strong>berättigat intresse</strong> (art. 6.1 f).</li>
+        <li>Icke-nödvändig spårning/analys (om aktiverad): <strong>samtycke</strong> (art. 6.1 a).</li>
+      </ul>
+      <h3>4. Lagringstid</h3>
+      <ul>
+        <li>Sessionscookie: upp till 12 timmar, eller tills utloggning.</li>
+        <li>Säkerhetsloggar: normalt upp till 90 dagar (kan justeras av driftsskäl).</li>
+        <li>Lokala inställningar i webbläsaren: tills användaren raderar dem.</li>
+      </ul>
+      <h3>5. Mottagare och överföring</h3>
+      <p>Data kan behandlas av driftleverantörer (hosting) och tekniska underbiträden. Vi säljer inte personuppgifter. Om tredjelandsöverföring sker ska lämpliga skyddsåtgärder användas.</p>
+      <h3>6. Dina rättigheter</h3>
+      <ul>
+        <li>Rätt till tillgång, rättelse, radering, begränsning, invändning och dataportabilitet.</li>
+        <li>Rätt att återkalla samtycke när behandling bygger på samtycke.</li>
+        <li>Rätt att klaga till Integritetsskyddsmyndigheten (IMY).</li>
+      </ul>
+      <h3>7. Kontakt och begäran</h3>
+      <p>Skicka begäran till kontaktadressen ovan. Vi svarar normalt inom 30 dagar. Se även <a href="/legal/dsr">rutin för rättighetsbegäran</a>.</p>
+    """
+    return _render_legal_page(
+        "Integritetspolicy",
+        "Juridisk information",
+        "Här beskriver vi hur personuppgifter behandlas i TrendBot Dashboard.",
+        sections,
+    )
+
+
+def _render_cookie_page() -> str:
+    sections = """
+      <h2>Cookiepolicy</h2>
+      <p>Denna sida beskriver cookies och liknande tekniker i TrendBot Dashboard.</p>
+      <h3>1. Cookies och lokal lagring som används</h3>
+      <table>
+        <thead>
+          <tr><th>Namn</th><th>Typ</th><th>Syfte</th><th>Varaktighet</th><th>Nödvändig</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>trendbot_session</code></td><td>Cookie</td><td>Håller användaren inloggad och skyddar sessionen.</td><td>Upp till 12h / tills utloggning</td><td>Ja</td></tr>
+          <tr><td><code>trendbot_theme_v1</code></td><td>localStorage</td><td>Sparar valt tema (light/dark).</td><td>Tills borttagning</td><td>Nej (funktionell)</td></tr>
+          <tr><td><code>trendbot_watchlist_v1</code></td><td>localStorage</td><td>Sparar lokal watchlist i webbläsaren.</td><td>Tills borttagning</td><td>Nej (funktionell)</td></tr>
+          <tr><td><code>trendbot_cookie_consent_v1</code></td><td>localStorage</td><td>Sparar samtyckesval för icke-nödvändig spårning.</td><td>Tills borttagning / 12 månader rekommenderat</td><td>Ja (för att minnas val)</td></tr>
+        </tbody>
+      </table>
+      <h3>2. Tredje part</h3>
+      <p>När du klickar utgående länkar (t.ex. Google-sökning, nyhetssajter, sociala plattformar) kan tredje part sätta egna cookies enligt sina policyer.</p>
+      <h3>3. Samtycke för icke-nödvändiga cookies</h3>
+      <p>Om analys/annonsering/pixels aktiveras visas samtyckesruta innan sådana tekniker används. Utan samtycke ska de inte laddas.</p>
+      <h3>4. Hur du återkallar samtycke</h3>
+      <ul>
+        <li>Rensa webbplatsdata i din webbläsare, eller</li>
+        <li>ta bort <code>trendbot_cookie_consent_v1</code> i localStorage, eller</li>
+        <li>kontakta supporten för hjälp.</li>
+      </ul>
+    """
+    return _render_legal_page(
+        "Cookiepolicy",
+        "Juridisk information",
+        "Här beskriver vi vilka cookies och liknande tekniker som används på webbplatsen och varför.",
+        sections,
+    )
+
+
+def _render_dsr_page() -> str:
+    sections = """
+      <h2>Rutin för rättighetsbegäran</h2>
+      <ol>
+        <li>Ta emot begäran via dedikerad e-post (t.ex. privacy@trendradarn.se).</li>
+        <li>Verifiera identitet på ett proportionerligt sätt.</li>
+        <li>Registrera ärendet i intern logg med datum, typ av begäran och ansvarig.</li>
+        <li>Bedöm rättslig grund och eventuella undantag.</li>
+        <li>Svara utan onödigt dröjsmål, normalt inom 30 dagar.</li>
+        <li>Dokumentera utfall och åtgärd.</li>
+      </ol>
+      <p>Denna rutin ska finnas operativt och följas i praktiken, inte bara beskrivas i policytext.</p>
+      <p>Se även <a href="/legal/register">register över behandling (mall)</a>.</p>
+    """
+    return _render_legal_page(
+        "Rättighetsbegäran",
+        "GDPR-process",
+        "Intern och extern process för hantering av registrerades rättigheter.",
+        sections,
+    )
+
+
+def _render_register_page() -> str:
+    sections = """
+      <h2>Register över behandling (RoPA)</h2>
+      <p>Använd denna mall internt och håll den uppdaterad.</p>
+      <table>
+        <thead>
+          <tr><th>Behandling</th><th>Ändamål</th><th>Kategori data</th><th>Rättslig grund</th><th>Mottagare</th><th>Lagring</th><th>Säkerhet</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Inloggning</td><td>Åtkomstkontroll</td><td>Användarnamn, sessions-id</td><td>Avtal / berättigat intresse</td><td>Hosting-leverantör</td><td>Session + loggar</td><td>Hashade lösenord, rate-limit</td></tr>
+          <tr><td>Säkerhetsloggar</td><td>Missbruksskydd</td><td>Teknisk loggdata</td><td>Berättigat intresse</td><td>Hosting-leverantör</td><td>90 dagar (riktlinje)</td><td>Åtkomststyrning</td></tr>
+          <tr><td>Samtycke</td><td>Minnas val</td><td>Samtyckesstatus</td><td>Rättslig skyldighet/berättigat intresse</td><td>Ingen extern delning</td><td>Tills radering</td><td>Lokal lagring</td></tr>
+        </tbody>
+      </table>
+    """
+    return _render_legal_page(
+        "Register över behandling",
+        "GDPR-dokumentation",
+        "Detta är en publik mall. Behåll även en intern, detaljerad version.",
+        sections,
+    )
+
+
 def _format_ts(value: int) -> str:
     if not value:
         return "-"
@@ -1434,6 +1605,8 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         <a id="nav-dashboard" class="nav-link" href="?">Dashboard</a>
         <a id="nav-topic" class="nav-link" href="?view=topic">Topic</a>
         <a id="nav-media" class="nav-link" data-min-role="pro" href="?view=media">Bilder</a>
+        <a class="nav-link" href="/privacy" target="_blank" rel="noreferrer">Integritet</a>
+        <a class="nav-link" href="/cookies" target="_blank" rel="noreferrer">Cookies</a>
         <button id="refresh-btn" class="control-btn" type="button">Uppdatera</button>
         <button id="theme-toggle" class="control-btn" type="button" aria-label="toggle theme">Light mode</button>
         <button id="logout-btn" class="control-btn" type="button">Logga ut</button>
@@ -1623,8 +1796,20 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       <div id="media-topic-chips" class="chip-wrap"></div>
     </section>
   </main>
+  <div id="cookie-consent-banner" style="display:none; position:fixed; left:16px; right:16px; bottom:16px; z-index:2000; background:#fffaf4; border:1px solid #d9c9b7; border-radius:14px; padding:12px 14px; box-shadow:0 10px 24px rgba(0,0,0,.12);">
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <div style="flex:1; min-width:260px; color:#2c2219; font-size:14px;">
+        Vi använder nödvändiga cookies för inloggning och säkerhet. Icke-nödvändig spårning används endast efter samtycke.
+        Läs mer i <a href="/cookies" target="_blank" rel="noreferrer">Cookiepolicy</a>.
+      </div>
+      <button id="cookie-reject-btn" class="control-btn" type="button">Avvisa</button>
+      <button id="cookie-accept-btn" class="control-btn" type="button" style="border-color:#d56c34;color:#d56c34;">Acceptera</button>
+    </div>
+  </div>
   <script>
     const BOOTSTRAP_DATA = __BOOTSTRAP_DATA__;
+    const OPTIONAL_TRACKING_ENABLED = Boolean(BOOTSTRAP_DATA.optional_tracking_enabled);
+    const COOKIE_CONSENT_KEY = 'trendbot_cookie_consent_v1';
     const categoryColors = {
       pop_culture: '#f59e0b',
       music: '#ec4899',
@@ -1914,6 +2099,25 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       const next = document.body.classList.contains('theme-light') ? 'warm' : 'dark';
       applyTheme(next);
       try { localStorage.setItem(THEME_KEY, next); } catch {}
+    }
+    function initCookieConsent() {
+      const banner = document.getElementById('cookie-consent-banner');
+      const acceptBtn = document.getElementById('cookie-accept-btn');
+      const rejectBtn = document.getElementById('cookie-reject-btn');
+      if (!banner || !acceptBtn || !rejectBtn) return;
+      if (!OPTIONAL_TRACKING_ENABLED) return;
+      let current = '';
+      try { current = localStorage.getItem(COOKIE_CONSENT_KEY) || ''; } catch {}
+      if (current === 'accepted' || current === 'rejected') return;
+      banner.style.display = 'block';
+      acceptBtn.addEventListener('click', () => {
+        try { localStorage.setItem(COOKIE_CONSENT_KEY, 'accepted'); } catch {}
+        banner.style.display = 'none';
+      });
+      rejectBtn.addEventListener('click', () => {
+        try { localStorage.setItem(COOKIE_CONSENT_KEY, 'rejected'); } catch {}
+        banner.style.display = 'none';
+      });
     }
     function applyRoleUI() {
       const roleBadge = document.getElementById('role-badge');
@@ -2566,6 +2770,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     }
     applyScopeButtons();
     initTheme();
+    initCookieConsent();
     document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
     document.getElementById('refresh-btn').addEventListener('click', forceRefresh);
     document.getElementById('logout-btn').addEventListener('click', doLogout);
@@ -2597,6 +2802,18 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     settings: dict[str, Any]
 
     def do_GET(self) -> None:  # noqa: N802
+        if self.path.startswith("/privacy"):
+            self._send_html(_render_privacy_page())
+            return
+        if self.path.startswith("/cookies"):
+            self._send_html(_render_cookie_page())
+            return
+        if self.path.startswith("/legal/dsr"):
+            self._send_html(_render_dsr_page())
+            return
+        if self.path.startswith("/legal/register"):
+            self._send_html(_render_register_page())
+            return
         if self.path.startswith("/api/health"):
             self._send_json({"ok": True, "status": "healthy"})
             return
@@ -2656,7 +2873,13 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             payload["remaining"] = remaining
             self._send_json(payload)
             return
-        self._send_html(_render_index())
+        self._send_html(
+            _render_index(
+                {
+                    "optional_tracking_enabled": bool(self.settings.get("optional_tracking_enabled", False)),
+                }
+            )
+        )
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path.startswith("/api/login"):
@@ -2687,6 +2910,15 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self._send_json({"ok": False, "error": "Not found"}, status=404)
 
     def do_HEAD(self) -> None:  # noqa: N802
+        if (
+            self.path.startswith("/privacy")
+            or self.path.startswith("/cookies")
+            or self.path.startswith("/legal/dsr")
+            or self.path.startswith("/legal/register")
+        ):
+            body = b""
+            self._send_headers("text/html; charset=utf-8", len(body))
+            return
         if self.path.startswith("/api/health"):
             self._send_headers("application/json; charset=utf-8", len(b'{"ok":true}'))
             return
@@ -2719,7 +2951,9 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             payload = _post_ai_payload(self.storage, self.settings, topic_question, market_scope)
             self._send_headers("application/json; charset=utf-8", len(json.dumps(payload).encode("utf-8")))
             return
-        body = _render_index().encode("utf-8")
+        body = _render_index(
+            {"optional_tracking_enabled": bool(self.settings.get("optional_tracking_enabled", False))}
+        ).encode("utf-8")
         self._send_headers("text/html; charset=utf-8", len(body))
 
     def _summary_payload(self, market_scope: str | None = None) -> dict[str, Any]:
