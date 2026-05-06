@@ -3,7 +3,7 @@
 Denna rutin gäller begäran om tillgång, rättelse, radering, begränsning, invändning och dataportabilitet.
 
 ## 1. Inkommande kanal
-- Primär kanal: privacy@trendradarn.se (ändra till er riktiga adress)
+- Primär kanal: trendbot.team@gmail.com
 - Alla begäranden loggas samma dag i intern ärendelogg.
 
 ## 2. Identitetskontroll

@@ -112,7 +112,7 @@ def _render_privacy_page() -> str:
       <p>Denna policy gäller TrendBot Dashboard. Vi behandlar personuppgifter enligt GDPR och svensk dataskyddslagstiftning.</p>
       <h3>1. Personuppgiftsansvarig</h3>
       <p><strong>Personuppgiftsansvarig:</strong> TrendBot (ägare av tjänsten).<br />
-      <strong>Kontakt:</strong> ange din support-e-post här (exempel: privacy@trendradarn.se).</p>
+      <strong>Kontakt:</strong> trendbot.team@gmail.com.</p>
       <h3>2. Vilka uppgifter vi behandlar</h3>
       <ul>
         <li>Inloggningsuppgifter: användarnamn och hash-verifiering av lösenord.</li>
@@ -189,7 +189,7 @@ def _render_dsr_page() -> str:
     sections = """
       <h2>Rutin för rättighetsbegäran</h2>
       <ol>
-        <li>Ta emot begäran via dedikerad e-post (t.ex. privacy@trendradarn.se).</li>
+        <li>Ta emot begäran via dedikerad e-post (trendbot.team@gmail.com).</li>
         <li>Verifiera identitet på ett proportionerligt sätt.</li>
         <li>Registrera ärendet i intern logg med datum, typ av begäran och ansvarig.</li>
         <li>Bedöm rättslig grund och eventuella undantag.</li>
