@@ -92,6 +92,8 @@ class Config:
     enable_source_expressen: bool
     enable_source_hant: bool
     enable_source_hant_extra: bool
+    enable_source_svenskdam: bool
+    enable_source_nyheter24_noje: bool
     enable_source_svt: bool
     enable_source_tv4: bool
     enable_source_tiktok: bool
@@ -172,6 +174,8 @@ def load_config() -> Config:
         enable_source_expressen=_bool_env("ENABLE_SOURCE_EXPRESSEN", "true"),
         enable_source_hant=_bool_env("ENABLE_SOURCE_HANT", "true"),
         enable_source_hant_extra=_bool_env("ENABLE_SOURCE_HANT_EXTRA", "false"),
+        enable_source_svenskdam=_bool_env("ENABLE_SOURCE_SVENSKDAM", "true"),
+        enable_source_nyheter24_noje=_bool_env("ENABLE_SOURCE_NYHETER24_NOJE", "true"),
         enable_source_svt=_bool_env("ENABLE_SOURCE_SVT", "true"),
         enable_source_tv4=_bool_env("ENABLE_SOURCE_TV4", "true"),
         enable_source_tiktok=_bool_env("ENABLE_SOURCE_TIKTOK", "false"),

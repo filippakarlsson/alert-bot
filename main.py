@@ -24,6 +24,8 @@ SOURCE_SCOPE: dict[str, str] = {
     "expressen_noje": "sweden",
     "hant": "sweden",
     "hant_extra": "sweden",
+    "svenskdam": "sweden",
+    "nyheter24_noje": "sweden",
     "svt_noje": "sweden",
     "tv4_noje": "sweden",
     "google_news_global": "global",
@@ -258,6 +260,28 @@ def _build_fetchers(config):
         )
         hant_extra.source_name = "hant_extra"
         fetchers.append(hant_extra)
+    if config.enable_source_svenskdam:
+        svenskdam = GoogleNewsFetcher(
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+            hl="sv-SE",
+            gl="SE",
+            ceid="SE:sv",
+            query_suffix=f"site:svenskdam.se {recency_suffix}".strip(),
+        )
+        svenskdam.source_name = "svenskdam"
+        fetchers.append(svenskdam)
+    if config.enable_source_nyheter24_noje:
+        nyheter24_noje = GoogleNewsFetcher(
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+            hl="sv-SE",
+            gl="SE",
+            ceid="SE:sv",
+            query_suffix=f"site:nyheter24.se nöje {recency_suffix}".strip(),
+        )
+        nyheter24_noje.source_name = "nyheter24_noje"
+        fetchers.append(nyheter24_noje)
     if config.enable_source_svt:
         svt = GoogleNewsFetcher(
             limit=config.reddit_limit,
