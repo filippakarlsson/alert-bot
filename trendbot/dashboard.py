@@ -525,6 +525,15 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
             row for row in hot_topics
             if not _is_swedish_story(row.topic, row.cluster_label, row.example_title)
         ]
+    elif market_scope == "sweden":
+        top_topic_candidates = [
+            row for row in top_topic_candidates
+            if _is_swedish_story(row.topic, row.cluster_label, row.example_title)
+        ]
+        hot_topics = [
+            row for row in hot_topics
+            if _is_swedish_story(row.topic, row.cluster_label, row.example_title)
+        ]
     sticky_key = "dashboard:sticky_top10:v1"
     previous_raw = storage.get_state(sticky_key)
     previous_keys: list[str] = []
@@ -561,6 +570,11 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
         top_clusters = [
             row for row in top_clusters
             if not _is_swedish_story(row.cluster_label, row.example_title)
+        ]
+    elif market_scope == "sweden":
+        top_clusters = [
+            row for row in top_clusters
+            if _is_swedish_story(row.cluster_label, row.example_title)
         ]
     featured_topic = top_topics[0].topic if top_topics else ""
     featured_cluster = top_clusters[0].cluster_key if top_clusters else ""
@@ -2957,13 +2971,19 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self._send_headers("text/html; charset=utf-8", len(body))
 
     def _summary_payload(self, market_scope: str | None = None) -> dict[str, Any]:
-        if self.settings.get("swedish_only_mode") and market_scope == "global":
-            market_scope = "sweden"
+        if self.settings.get("swedish_only_mode"):
+            if self._current_role() == "lite":
+                market_scope = "sweden"
+            elif market_scope == "global":
+                market_scope = "sweden"
         return _summary_payload(self.storage, self.settings, market_scope)
 
     def _recent_payload(self, market_scope: str | None = None) -> dict[str, Any]:
-        if self.settings.get("swedish_only_mode") and market_scope == "global":
-            market_scope = "sweden"
+        if self.settings.get("swedish_only_mode"):
+            if self._current_role() == "lite":
+                market_scope = "sweden"
+            elif market_scope == "global":
+                market_scope = "sweden"
         return _recent_payload(self.storage, market_scope)
 
     def _auth_credentials(self) -> dict[str, str]:
