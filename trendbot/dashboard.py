@@ -703,6 +703,8 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
                 "samples": row.samples,
                 "latest_observed_at": row.latest_observed_at,
                 "latest_observed_at_human": _format_ts(row.latest_observed_at),
+                "latest_published_at": row.latest_published_at,
+                "latest_published_at_human": _format_ts(row.latest_published_at),
                 "trend_score": row.trend_score,
                 "category": row.category,
                 "cluster_label": row.cluster_label,
@@ -720,6 +722,8 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
                 "samples": row.samples,
                 "latest_observed_at": row.latest_observed_at,
                 "latest_observed_at_human": _format_ts(row.latest_observed_at),
+                "latest_published_at": row.latest_published_at,
+                "latest_published_at_human": _format_ts(row.latest_published_at),
                 "trend_score": row.trend_score,
                 "category": row.category,
                 "cluster_label": row.cluster_label,
@@ -762,6 +766,7 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
                 "total_mentions": row.total_mentions,
                 "samples": row.samples,
                 "latest_observed_at": row.latest_observed_at,
+                "latest_published_at": row.latest_published_at,
                 "topic_count": row.topic_count,
                 "trend_score": row.trend_score,
                 "example_title": row.example_title,
@@ -1214,12 +1219,15 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      flex-wrap: wrap;
       margin-bottom: 10px;
     }
     .nav-links {
-      display: inline-flex;
+      display: flex;
       align-items: center;
+      flex-wrap: wrap;
       gap: 8px;
+      justify-content: flex-end;
     }
     .nav-link {
       border: 1px solid #d9c9b7;
@@ -1252,6 +1260,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       font-weight: 800;
       letter-spacing: -0.02em;
       color: #121212;
+      overflow-wrap: anywhere;
     }
     h2 {
       margin: 0 0 12px;
@@ -1485,12 +1494,34 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       padding: 16px;
     }
     .login-card {
+      position: relative;
       width: min(420px, 100%);
       background: #fffaf4;
       border: 1px solid #d9c9b7;
       border-radius: 16px;
       padding: 18px;
       box-shadow: 0 20px 45px rgba(71, 44, 20, 0.14);
+    }
+    .login-close {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      border: 1px solid #d9c9b7;
+      background: #fff8f2;
+      color: #2b2118;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .login-close:hover {
+      border-color: rgba(245, 158, 11, 0.55);
+      color: #d56c34;
     }
     .login-card .muted { color: #5b5045; }
     .login-input {
@@ -1512,6 +1543,15 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       box-shadow: 0 24px 50px rgba(0, 0, 0, 0.35);
     }
     body.theme-light .login-card .muted { color: #cbd5e1; }
+    body.theme-light .login-close {
+      border: 1px solid rgba(148, 163, 184, 0.26);
+      background: rgba(15, 23, 42, 0.9);
+      color: #e2e8f0;
+    }
+    body.theme-light .login-close:hover {
+      border-color: #fb923c;
+      color: #fbbf24;
+    }
     body.theme-light .login-input {
       border: 1px solid rgba(148, 163, 184, 0.26);
       background: rgba(15, 23, 42, 0.9);
@@ -1600,11 +1640,29 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     a { color: #93c5fd; text-decoration: none; }
     a:hover { text-decoration: underline; }
     code { background: rgba(148,163,184,.12); padding: 2px 6px; border-radius: 6px; }
+    .site-footer {
+      padding: 8px 24px 28px;
+    }
+    .site-footer .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    @media (max-width: 920px) {
+      header { padding: 16px 14px 8px; }
+      main { padding: 0 14px 20px; }
+      .site-footer { padding: 8px 14px 20px; }
+      h1 { font-size: clamp(30px, 11vw, 52px); line-height: 0.95; }
+      .nav-links { justify-content: flex-start; }
+      .nav-link, .control-btn { padding: 8px 9px; font-size: 12px; }
+    }
   </style>
 </head>
 <body>
   <div id="login-overlay" class="login-overlay">
     <div class="login-card">
+      <button id="login-close" class="login-close" type="button" aria-label="Stäng login">✕</button>
       <h2>Logga in</h2>
       <p class="muted">Konto: <code>admin</code>, <code>start</code> eller <code>pro</code></p>
       <input id="login-username" class="login-input" type="text" placeholder="username" />
@@ -1620,11 +1678,10 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       <h1>TrendBot Dashboard</h1>
       <nav class="nav-links">
         <span id="role-badge" class="pill" style="margin-right:6px;">Plan: Start</span>
+        <a id="nav-home" class="nav-link" href="https://trendbot.se" rel="noreferrer">Hem</a>
         <a id="nav-dashboard" class="nav-link" href="?">Dashboard</a>
         <a id="nav-topic" class="nav-link" href="?view=topic">Topic</a>
         <a id="nav-media" class="nav-link" data-min-role="pro" href="?view=media">Bilder</a>
-        <a class="nav-link" href="/privacy" target="_blank" rel="noreferrer">Integritet</a>
-        <a class="nav-link" href="/cookies" target="_blank" rel="noreferrer">Cookies</a>
         <button id="refresh-btn" class="control-btn" type="button">Uppdatera</button>
         <button id="theme-toggle" class="control-btn" type="button" aria-label="toggle theme">Light mode</button>
         <button id="logout-btn" class="control-btn" type="button">Logga ut</button>
@@ -1814,6 +1871,13 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       <div id="media-topic-chips" class="chip-wrap"></div>
     </section>
   </main>
+  <footer class="site-footer">
+    <div class="footer-links">
+      <a class="nav-link" href="/privacy" target="_blank" rel="noreferrer">Integritet</a>
+      <a class="nav-link" href="/cookies" target="_blank" rel="noreferrer">Cookies</a>
+      <a class="nav-link" href="/legal/dsr" target="_blank" rel="noreferrer">Dina rättigheter</a>
+    </div>
+  </footer>
   <div id="cookie-consent-banner" style="display:none; position:fixed; left:16px; right:16px; bottom:16px; z-index:2000; background:#fffaf4; border:1px solid #d9c9b7; border-radius:14px; padding:12px 14px; box-shadow:0 10px 24px rgba(0,0,0,.12);">
     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
       <div style="flex:1; min-width:260px; color:#2c2219; font-size:14px;">
@@ -2276,7 +2340,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
               <div class="score">${item.trend_score.toFixed(1)}</div>
             </div>
           </div>
-          <div class="muted">${item.total_mentions} mentions across ${item.samples} samples • ${item.source_count} sources • latest ${item.latest_observed_at_human}</div>
+          <div class="muted">${item.total_mentions} mentions across ${item.samples} samples • ${item.source_count} sources • seen ${item.latest_observed_at_human} • published ${item.latest_published_at_human || '-'}</div>
           ${chipsHtml(item)}
           <div class="muted">Cluster: ${escapeHtml(item.cluster_label || item.topic)}</div>
           <div class="muted">Trend score: ${item.trend_score.toFixed(1)} / 100</div>
@@ -2476,7 +2540,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
               <div class="score">${item.total_mentions}</div>
             </div>
           </div>
-          <div class="muted">${item.total_mentions} mentions • ${item.source_count} sources • latest ${item.latest_observed_at_human}</div>
+          <div class="muted">${item.total_mentions} mentions • ${item.source_count} sources • seen ${item.latest_observed_at_human} • published ${item.latest_published_at_human || '-'}</div>
           ${chipsHtml(item)}
           ${item.example_title ? `<div class="muted">${escapeHtml(item.example_title)}</div>` : ''}
         </li>
@@ -2792,6 +2856,15 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
     document.getElementById('refresh-btn').addEventListener('click', forceRefresh);
     document.getElementById('logout-btn').addEventListener('click', doLogout);
+    document.getElementById('nav-home').addEventListener('click', (e) => {
+      e.preventDefault();
+      window.location.href = 'https://trendbot.se';
+    });
+    document.getElementById('login-close').addEventListener('click', () => {
+      const status = document.getElementById('login-status');
+      if (status) status.textContent = '';
+      document.getElementById('login-overlay').style.display = 'none';
+    });
     applyRoleUI();
     document.getElementById('login-submit').addEventListener('click', doLogin);
     document.getElementById('login-password').addEventListener('keydown', (e) => {

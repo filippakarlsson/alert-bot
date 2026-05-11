@@ -23,6 +23,7 @@ class TopicSummary:
     total_mentions: int
     samples: int
     latest_observed_at: int
+    latest_published_at: int = 0
     category: str = "default"
     cluster_label: str = ""
     trend_score: float = 0.0
@@ -35,6 +36,7 @@ class TopicSummary:
 class TopicRollup:
     topic: str
     observed_at: int
+    latest_published_at: int
     total_mentions: int
     source_count: int
     category: str
@@ -63,6 +65,7 @@ class ClusterSummary:
     total_mentions: int
     samples: int
     latest_observed_at: int
+    latest_published_at: int
     topic_count: int
     trend_score: float
     example_title: str = ""
@@ -164,6 +167,7 @@ class Storage:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     topic TEXT NOT NULL,
                     observed_at INTEGER NOT NULL,
+                    latest_published_at INTEGER NOT NULL DEFAULT 0,
                     total_mentions INTEGER NOT NULL,
                     source_count INTEGER NOT NULL,
                     category TEXT NOT NULL,
@@ -184,6 +188,13 @@ class Storage:
                     """
                     ALTER TABLE topic_rollups
                     ADD COLUMN market_scope TEXT NOT NULL DEFAULT 'mixed'
+                    """
+                )
+            if "latest_published_at" not in rollup_columns:
+                conn.execute(
+                    """
+                    ALTER TABLE topic_rollups
+                    ADD COLUMN latest_published_at INTEGER NOT NULL DEFAULT 0
                     """
                 )
 
@@ -239,14 +250,15 @@ class Storage:
             conn.execute(
                 """
                 INSERT INTO topic_rollups (
-                    topic, observed_at, total_mentions, source_count,
+                    topic, observed_at, latest_published_at, total_mentions, source_count,
                     category, cluster_key, cluster_label, trend_score, example_title, market_scope
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rollup.topic,
                     rollup.observed_at,
+                    rollup.latest_published_at,
                     rollup.total_mentions,
                     rollup.source_count,
                     rollup.category,
@@ -335,6 +347,7 @@ class Storage:
                     SUM(total_mentions) AS total_mentions,
                     COUNT(*) AS samples,
                     MAX(observed_at) AS latest_observed_at,
+                    MAX(latest_published_at) AS latest_published_at,
                     MAX(source_count) AS source_count,
                     AVG(trend_score) AS avg_trend_score
                 FROM topic_rollups
@@ -354,6 +367,7 @@ class Storage:
                 total_mentions=int(row["total_mentions"] or 0),
                 samples=int(row["samples"] or 0),
                 latest_observed_at=int(row["latest_observed_at"] or 0),
+                latest_published_at=int(row["latest_published_at"] or 0),
                 category=row["category"] or "default",
                 cluster_label=row["cluster_label"] or row["example_title"] or row["cluster_key"] or "",
                 trend_score=float(row["avg_trend_score"] or 0.0),
@@ -451,6 +465,7 @@ class Storage:
                     SUM(total_mentions) AS total_mentions,
                     COUNT(*) AS samples,
                     MAX(observed_at) AS latest_observed_at,
+                    MAX(latest_published_at) AS latest_published_at,
                     COUNT(DISTINCT topic) AS topic_count,
                     AVG(trend_score) AS avg_trend_score
                 FROM topic_rollups
@@ -470,6 +485,7 @@ class Storage:
                 total_mentions=int(row["total_mentions"] or 0),
                 samples=int(row["samples"] or 0),
                 latest_observed_at=int(row["latest_observed_at"] or 0),
+                latest_published_at=int(row["latest_published_at"] or 0),
                 topic_count=int(row["topic_count"] or 0),
                 trend_score=min(100.0, round(float(row["avg_trend_score"] or 0.0), 1)),
                 market_scope=row["market_scope"] or "mixed",

@@ -458,6 +458,7 @@ def poll_once(config=None, storage=None) -> int:
         cluster_label = cluster_signal.label if cluster_signal else topic
         cluster_key = normalize_cluster_key(cluster_label)
         combined_mentions = len(combined_posts)
+        latest_published_at = max((int(post.created_utc or 0) for post in combined_posts), default=0)
         combined_baseline = mean(baselines_by_source) if baselines_by_source else 0.0
         signal_strength = float(cluster_signal.score) if cluster_signal else 0.0
         rollup_score = score_trend(
@@ -470,6 +471,7 @@ def poll_once(config=None, storage=None) -> int:
             TopicRollup(
                 topic=topic,
                 observed_at=now,
+                latest_published_at=latest_published_at,
                 total_mentions=combined_mentions,
                 source_count=source_count,
                 category=categorize_topic(
