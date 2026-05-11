@@ -510,34 +510,69 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
 
     now = int(datetime.now(tz=timezone.utc).timestamp())
     min_daily_mentions = int(settings.get("daily_top_min_mentions", 3))
-    top_topic_candidates = [
-        row
-        for row in storage.top_topics_since(now - 86400, 80, min_total_mentions=min_daily_mentions, market_scope=market_scope)
-        if not _is_blocked(row.topic, row.cluster_label, row.example_title)
-    ]
-    hot_topics = [
-        row
-        for row in storage.top_topics_since(now - 3600, 40, min_total_mentions=1, market_scope=market_scope)
-        if not _is_blocked(row.topic, row.cluster_label, row.example_title)
-    ][:10]
-    if market_scope == "global":
-        top_topic_candidates = [
-            row for row in top_topic_candidates
-            if not _is_swedish_story(row.topic, row.cluster_label, row.example_title)
+
+    def _apply_scope(rows):
+        if market_scope == "global":
+            return [
+                row
+                for row in rows
+                if not _is_swedish_story(row.topic, row.cluster_label, row.example_title)
+            ]
+        if market_scope == "sweden":
+            return [
+                row
+                for row in rows
+                if _is_swedish_story(row.topic, row.cluster_label, row.example_title)
+            ]
+        return rows
+
+    def _topics_for_window(window_seconds: int, limit: int, min_total_mentions: int):
+        rows = storage.top_topics_since(
+            now - window_seconds,
+            limit,
+            min_total_mentions=min_total_mentions,
+            market_scope=market_scope,
+        )
+        rows = [
+            row
+            for row in rows
+            if not _is_blocked(row.topic, row.cluster_label, row.example_title)
         ]
-        hot_topics = [
-            row for row in hot_topics
-            if not _is_swedish_story(row.topic, row.cluster_label, row.example_title)
-        ]
-    elif market_scope == "sweden":
-        top_topic_candidates = [
-            row for row in top_topic_candidates
-            if _is_swedish_story(row.topic, row.cluster_label, row.example_title)
-        ]
-        hot_topics = [
-            row for row in hot_topics
-            if _is_swedish_story(row.topic, row.cluster_label, row.example_title)
-        ]
+        return _apply_scope(rows)
+
+    def _clusters_for_window(window_seconds: int, limit: int):
+        rows = storage.top_clusters_since(now - window_seconds, limit, market_scope=market_scope)
+        rows = [row for row in rows if not _is_blocked(row.cluster_label, row.example_title)]
+        if market_scope == "global":
+            rows = [row for row in rows if not _is_swedish_story(row.cluster_label, row.example_title)]
+        elif market_scope == "sweden":
+            rows = [row for row in rows if _is_swedish_story(row.cluster_label, row.example_title)]
+        return rows
+
+    top_topic_candidates = _topics_for_window(86400, 80, min_daily_mentions)
+    hot_topics = _topics_for_window(3600, 40, 1)[:10]
+    lookback_used_seconds = 86400
+    data_mode = "live_24h"
+
+    # If the bot was down, avoid blank/zero UI by falling back to the latest known window.
+    if not top_topic_candidates:
+        for fallback_window_seconds in (86400 * 3, 86400 * 7, 86400 * 30):
+            fallback_topics = _topics_for_window(
+                fallback_window_seconds,
+                80,
+                max(1, min_daily_mentions - 1),
+            )
+            if fallback_topics:
+                top_topic_candidates = fallback_topics
+                lookback_used_seconds = fallback_window_seconds
+                data_mode = f"fallback_{fallback_window_seconds // 86400}d"
+                break
+
+    if not hot_topics:
+        if lookback_used_seconds > 3600:
+            hot_topics = _topics_for_window(lookback_used_seconds, 40, 1)[:10]
+        if not hot_topics and top_topic_candidates:
+            hot_topics = top_topic_candidates[:10]
     sticky_key = "dashboard:sticky_top10:v1"
     previous_raw = storage.get_state(sticky_key)
     previous_keys: list[str] = []
@@ -564,22 +599,12 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
         reverse=True,
     )[:10]
     storage.set_state(sticky_key, json.dumps([item.cluster_key for item in top_topics]))
-    top_categories = storage.top_categories_since(now - 86400, 8, market_scope=market_scope)
-    top_clusters = [
-        row
-        for row in storage.top_clusters_since(now - 86400, 30, market_scope=market_scope)
-        if not _is_blocked(row.cluster_label, row.example_title)
-    ][:10]
-    if market_scope == "global":
-        top_clusters = [
-            row for row in top_clusters
-            if not _is_swedish_story(row.cluster_label, row.example_title)
-        ]
-    elif market_scope == "sweden":
-        top_clusters = [
-            row for row in top_clusters
-            if _is_swedish_story(row.cluster_label, row.example_title)
-        ]
+    top_categories = storage.top_categories_since(
+        now - lookback_used_seconds,
+        8,
+        market_scope=market_scope,
+    )
+    top_clusters = _clusters_for_window(lookback_used_seconds, 30)[:10]
     featured_topic = top_topics[0].topic if top_topics else ""
     featured_cluster = top_clusters[0].cluster_key if top_clusters else ""
     category_multipliers = {
@@ -692,6 +717,12 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
             fallback = re.sub(r"^cluster:\s*", "", cluster_key or "", flags=re.IGNORECASE).replace("_", " ").strip()
         fallback = re.sub(r"\s+", " ", fallback).strip(" -–—:")
         return fallback or "Oklart ämne"
+
+    latest_known_observed_at = 0
+    if top_topics:
+        latest_known_observed_at = max(latest_known_observed_at, max(row.latest_observed_at for row in top_topics))
+    if hot_topics:
+        latest_known_observed_at = max(latest_known_observed_at, max(row.latest_observed_at for row in hot_topics))
 
     return {
         "top_topics": [
@@ -815,6 +846,10 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
             "live_alerts_7d": live_alerts_7d,
         },
         "market_scope": market_scope or "all",
+        "data_mode": data_mode,
+        "lookback_used_seconds": lookback_used_seconds,
+        "latest_known_observed_at": latest_known_observed_at,
+        "latest_known_observed_at_human": _format_ts(latest_known_observed_at) if latest_known_observed_at else "",
     }
 
 
@@ -822,6 +857,9 @@ def _recent_payload(storage: Storage, market_scope: str | None = None) -> dict[s
     items = storage.recent_observations_global(20)
     if market_scope in {"sweden", "global"}:
         items = [item for item in items if SOURCE_SCOPE.get(item.source, "global") == market_scope]
+    if not items:
+        # Fallback to latest known rows so reload never looks completely dead.
+        items = storage.recent_observations_global(20)
     payload = []
     total_new = 0
     total_fetched = 0
@@ -2321,10 +2359,14 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       moreBtn.textContent = top10ShowAll ? 'Show less ▴' : 'Show more ▾';
 
       const selected = allItems.find((item) => item.cluster_key === top10SelectedKey) || visibleItems[0];
+      let freshnessNote = '';
+      if ((summary.data_mode || '').startsWith('fallback_')) {
+        freshnessNote = ` • showing latest known snapshot (${escapeHtml(summary.latest_known_observed_at_human || 'older data')})`;
+      }
       focusEl.innerHTML = `
         <strong>${escapeHtml(selected.topic)}</strong>
         <span class="source">${selected.category}</span>
-        • ${selected.total_mentions} mentions • score ${selected.trend_score.toFixed(1)} / 100
+        • ${selected.total_mentions} mentions • score ${selected.trend_score.toFixed(1)} / 100${freshnessNote}
       `;
 
       listEl.innerHTML = visibleItems.map((item) => `
@@ -2624,9 +2666,12 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       `;
 
       const hasNewInRecent = safeRecent.items.some((item) => item.new_mentions > 0);
+      const staleSuffix = (safeSummary.data_mode || '').startsWith('fallback_')
+        ? ` • scanner is stale, latest snapshot: ${safeSummary.latest_known_observed_at_human || 'unknown'}`
+        : '';
       document.getElementById('recent-status').textContent = hasNewInRecent
         ? `New matches in recent rows: ${safeRecent.total_new_mentions} / ${safeRecent.total_fetched_mentions} fetched`
-        : `No new items in the most recent cycle(s). Seen before or no fresh matches. (${safeRecent.total_new_mentions} / ${safeRecent.total_fetched_mentions})`;
+        : `No new items in the most recent cycle(s). Seen before or no fresh matches. (${safeRecent.total_new_mentions} / ${safeRecent.total_fetched_mentions})${staleSuffix}`;
 
       document.getElementById('recent').innerHTML = safeRecent.items.map((item) => `
         <li>
