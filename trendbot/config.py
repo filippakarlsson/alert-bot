@@ -102,6 +102,7 @@ class Config:
 
 def load_config() -> Config:
     _load_dotenv()
+    swedish_only_mode = _bool_env("SWEDISH_ONLY_MODE", "true")
     topics_raw = os.getenv("TRENDBOT_TOPICS_ACTIVE", "").strip()
     topics = _csv_env(
         "TRENDBOT_TOPICS_ACTIVE" if topics_raw else "TRENDBOT_TOPICS",
@@ -154,22 +155,22 @@ def load_config() -> Config:
         google_news_gl=os.getenv("GOOGLE_NEWS_GL", "US").strip(),
         google_news_ceid=os.getenv("GOOGLE_NEWS_CEID", "US:en").strip(),
         google_news_recency_query=os.getenv("GOOGLE_NEWS_RECENCY_QUERY", "when:2d").strip(),
-        swedish_only_mode=_bool_env("SWEDISH_ONLY_MODE", "true"),
+        swedish_only_mode=swedish_only_mode,
         max_item_age_hours=int(os.getenv("MAX_ITEM_AGE_HOURS", "72")),
         require_item_timestamp=_bool_env("REQUIRE_ITEM_TIMESTAMP", "true"),
         skip_previous_year_titles=_bool_env("SKIP_PREVIOUS_YEAR_TITLES", "true"),
         enable_source_google_se=_bool_env("ENABLE_SOURCE_GOOGLE_SE", "true"),
-        enable_source_google_global=_bool_env("ENABLE_SOURCE_GOOGLE_GLOBAL", "true"),
-        enable_source_bbc=_bool_env("ENABLE_SOURCE_BBC", "true"),
-        enable_source_npr=_bool_env("ENABLE_SOURCE_NPR", "true"),
-        enable_source_ap=_bool_env("ENABLE_SOURCE_AP", "true"),
-        enable_source_variety=_bool_env("ENABLE_SOURCE_VARIETY", "true"),
-        enable_source_billboard=_bool_env("ENABLE_SOURCE_BILLBOARD", "true"),
-        enable_source_the_verge=_bool_env("ENABLE_SOURCE_THE_VERGE", "true"),
-        enable_source_people=_bool_env("ENABLE_SOURCE_PEOPLE", "true"),
-        enable_source_eonline=_bool_env("ENABLE_SOURCE_EONLINE", "true"),
-        enable_source_tmz=_bool_env("ENABLE_SOURCE_TMZ", "true"),
-        enable_source_rollingstone=_bool_env("ENABLE_SOURCE_ROLLINGSTONE", "true"),
+        enable_source_google_global=_bool_env("ENABLE_SOURCE_GOOGLE_GLOBAL", "false" if swedish_only_mode else "true"),
+        enable_source_bbc=_bool_env("ENABLE_SOURCE_BBC", "false" if swedish_only_mode else "true"),
+        enable_source_npr=_bool_env("ENABLE_SOURCE_NPR", "false" if swedish_only_mode else "true"),
+        enable_source_ap=_bool_env("ENABLE_SOURCE_AP", "false" if swedish_only_mode else "true"),
+        enable_source_variety=_bool_env("ENABLE_SOURCE_VARIETY", "false" if swedish_only_mode else "true"),
+        enable_source_billboard=_bool_env("ENABLE_SOURCE_BILLBOARD", "false" if swedish_only_mode else "true"),
+        enable_source_the_verge=_bool_env("ENABLE_SOURCE_THE_VERGE", "false" if swedish_only_mode else "true"),
+        enable_source_people=_bool_env("ENABLE_SOURCE_PEOPLE", "false" if swedish_only_mode else "true"),
+        enable_source_eonline=_bool_env("ENABLE_SOURCE_EONLINE", "false" if swedish_only_mode else "true"),
+        enable_source_tmz=_bool_env("ENABLE_SOURCE_TMZ", "false" if swedish_only_mode else "true"),
+        enable_source_rollingstone=_bool_env("ENABLE_SOURCE_ROLLINGSTONE", "false" if swedish_only_mode else "true"),
         enable_source_aftonbladet=_bool_env("ENABLE_SOURCE_AFTONBLADET", "true"),
         enable_source_expressen=_bool_env("ENABLE_SOURCE_EXPRESSEN", "true"),
         enable_source_hant=_bool_env("ENABLE_SOURCE_HANT", "true"),

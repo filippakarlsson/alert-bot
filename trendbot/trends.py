@@ -115,6 +115,22 @@ STOPWORDS = {
     "igår",
     "imorgon",
     "tv",
+    "report",
+    "reports",
+    "uppdatering",
+    "uppdateringar",
+    "nyheterna",
+    "nyheter",
+    "senaste",
+    "live",
+    "breaking",
+    "today",
+    "tonight",
+    "watch",
+    "update",
+    "updates",
+    "fpl",
+    "scout",
 }
 
 GENERIC_LABELS = {
@@ -146,7 +162,35 @@ GENERIC_LABELS = {
     "politics",
     "pop culture",
     "celebrity",
+    "gaming",
+    "internet",
+    "viral trends",
+    "youtube",
+    "social media",
+    "reality tv",
 }
+
+GENERIC_SINGLE_WORDS = {
+    "news",
+    "music",
+    "movie",
+    "movies",
+    "film",
+    "tv",
+    "series",
+    "show",
+    "shows",
+    "politics",
+    "celebrity",
+    "gaming",
+    "internet",
+    "youtube",
+}
+
+SOURCE_TAIL_RE = re.compile(
+    r"\s[-–—]\s(?:Aftonbladet|Expressen|SVT(?: Nyheter)?|TV4(?: Nyheterna)?|Omni|Reuters|AP News|BBC|People\.com|Billboard|Variety|The Verge|Yahoo(?: Sports)?|CNBC|TMZ|E!\s*Online|[A-Za-z0-9.-]+\.(?:se|com|org|net))$",
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -162,7 +206,7 @@ def _tokenize(text: str) -> List[str]:
 
 
 def _clean_headline(title: str) -> str:
-    cleaned = title.strip()
+    cleaned = _strip_source_tail(title.strip())
     if "|" in cleaned:
         cleaned = cleaned.split("|", 1)[0].strip()
     if " - " in cleaned:
@@ -171,6 +215,17 @@ def _clean_headline(title: str) -> str:
     cleaned = re.sub(r"^(just nu|senaste|breaking|live|nu)\s*[:\-–—]?\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
+
+
+def _strip_source_tail(text: str) -> str:
+    value = (text or "").strip()
+    if not value:
+        return ""
+    previous = None
+    while previous != value:
+        previous = value
+        value = SOURCE_TAIL_RE.sub("", value).strip()
+    return value
 
 
 def _normalize_token(token: str) -> str:
@@ -242,8 +297,12 @@ def _label_is_too_broad(label: str) -> bool:
     if normalized in GENERIC_LABELS:
         return True
     tokens = normalized.split()
-    if len(tokens) <= 2:
+    if len(tokens) == 1:
         return True
+    if len(tokens) == 2:
+        if all(token in GENERIC_SINGLE_WORDS for token in tokens):
+            return True
+        return False
     generic_hits = sum(1 for token in tokens if token in GENERIC_LABELS)
     return generic_hits >= max(1, len(tokens) // 2)
 
@@ -284,16 +343,21 @@ def _is_clear_label(label: str) -> bool:
 
 
 def _headline_to_label(headline: str, fallback: str) -> str:
-    clean = _clean_headline(headline)
+    clean = _strip_source_tail(_clean_headline(headline))
     if ":" in clean:
         left, right = clean.split(":", 1)
         right = right.strip()
-        if right and len(right.split()) >= 2:
+        if right and len(_simplify_title(right, ())) >= 2:
             clean = right
     tokens = _simplify_title(clean, ())
+    if len(tokens) >= 3:
+        return " ".join(tokens[:7])
     if len(tokens) >= 2:
         return " ".join(tokens[:8])
-    return clean or fallback
+    fallback_clean = _strip_source_tail(_clean_headline(fallback or ""))
+    if fallback_clean and len(_simplify_title(fallback_clean, ())) >= 2:
+        return fallback_clean
+    return clean or fallback_clean or fallback
 
 
 def _canonical_story_key(item: FeedItem, blocked_terms: Sequence[str]) -> str:

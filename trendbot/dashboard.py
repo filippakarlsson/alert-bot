@@ -420,6 +420,19 @@ def _is_context_label(text: str) -> bool:
     return len(value.split()) >= 2
 
 
+def _label_specificity_score(text: str) -> int:
+    value = re.sub(r"\s+", " ", (text or "").strip())
+    if not value:
+        return -1
+    tokens = re.findall(r"[A-Za-zÅÄÖåäö0-9]+", value)
+    if not tokens:
+        return -1
+    unique_tokens = len(set(tok.lower() for tok in tokens))
+    digits = sum(1 for tok in tokens if any(ch.isdigit() for ch in tok))
+    long_tokens = sum(1 for tok in tokens if len(tok) >= 6)
+    return (unique_tokens * 3) + (digits * 2) + long_tokens
+
+
 def _is_vague_label(text: str) -> bool:
     value = re.sub(r"\s+", " ", (text or "").lower().strip())
     if not value:
@@ -691,21 +704,29 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
                 candidates.append(pair)
 
     def _best_cluster_label(cluster_key: str, fallback_label: str, fallback_example: str, fallback_topic: str = "") -> str:
+        valid_candidates: list[str] = []
+
         base = _series_label(fallback_label, fallback_example)
         if base:
             expanded = _expand_with_example_context(base, fallback_example)
             if _is_context_label(expanded) and not _is_vague_label(expanded):
-                return expanded
+                valid_candidates.append(expanded)
+
         for cand, cand_example in candidate_labels_by_cluster.get(cluster_key or "", []):
             if _is_context_label(cand):
                 expanded = _expand_with_example_context(cand, cand_example or fallback_example)
                 if _is_context_label(expanded) and not _is_vague_label(expanded):
-                    return expanded
+                    valid_candidates.append(expanded)
+
         topic_guess = _strip_leading_news_phrase(fallback_topic or "")
         if _is_context_label(topic_guess):
             expanded = _expand_with_example_context(topic_guess, fallback_example)
             if _is_context_label(expanded) and not _is_vague_label(expanded):
-                return expanded
+                valid_candidates.append(expanded)
+
+        if valid_candidates:
+            return max(valid_candidates, key=_label_specificity_score)
+
         if _is_context_label(base):
             return base
         expanded_base = _expand_with_example_context(base or "", fallback_example)
@@ -1312,6 +1333,17 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       color: #f8fafc;
     }
     p { color: var(--muted); margin: 8px 0 0; font-weight: 600; }
+    .sync-status {
+      margin-top: 6px;
+      font-size: 12px;
+      color: #8b7f72;
+      font-weight: 700;
+    }
+    .sync-status.error {
+      color: #b45309;
+    }
+    body.theme-light .sync-status { color: #94a3b8; }
+    body.theme-light .sync-status.error { color: #f59e0b; }
     main { padding: 0 24px 32px; display: grid; gap: 18px; }
     .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
     .grid.wide { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
@@ -1726,6 +1758,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       </nav>
     </div>
     <p>Live overview of the strongest topics and the latest observations.</p>
+    <div id="sync-status" class="sync-status">Synkar...</div>
   </header>
   <main id="dashboard-page">
     <section class="card" data-min-role="start">
@@ -2161,6 +2194,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     let activeFilter = 'all';
     let activeWindowHours = 24;
     let currentTopicKey = '';
+    let loadInFlight = false;
     const WATCHLIST_KEY = 'trendbot_watchlist_v1';
     const THEME_KEY = 'trendbot_theme_v1';
     function nowUtcSeconds() {
@@ -2168,6 +2202,12 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     }
     function topicText(item) {
       return `${item.topic || ''} ${item.example_title || ''} ${item.category || ''}`.toLowerCase();
+    }
+    function setSyncStatus(message, isError = false) {
+      const el = document.getElementById('sync-status');
+      if (!el) return;
+      el.textContent = message;
+      el.classList.toggle('error', Boolean(isError));
     }
     function matchesFilter(item) {
       if (!item) return false;
@@ -2448,7 +2488,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       const topic = item.topic || 'Det här';
       const ex = item.example_title || '';
       const cat = (item.category || '').toLowerCase();
-      const sourceTail = /\s[-–—]\s(?:Aftonbladet|Expressen|SVT(?: Nyheter)?|TV4(?: Nyheterna)?|Omni|Reuters|AP News|BBC|People\.com|Billboard|Variety|The Verge|Yahoo|Fox \d+|[A-Za-z0-9.-]+\.(?:se|com|org|net))$/i;
+      const sourceTail = /\\s[-–—]\\s(?:Aftonbladet|Expressen|SVT(?: Nyheter)?|TV4(?: Nyheterna)?|Omni|Reuters|AP News|BBC|People\\.com|Billboard|Variety|The Verge|Yahoo|Fox \\d+|[A-Za-z0-9.-]+\\.(?:se|com|org|net))$/i;
       const cleanedExample = ex.replace(sourceTail, '').trim();
       const hookOptions = [
         `POV: du missade helt vad som hände kring ${topic}`,
@@ -2545,6 +2585,9 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       updateWatchlistButton();
     }
     async function loadData() {
+      if (loadInFlight) return;
+      loadInFlight = true;
+      setSyncStatus('Synkar live-data...');
       try {
         const scopeQuery = `?scope=${encodeURIComponent(marketScope)}`;
         const [summary, recent] = await Promise.all([
@@ -2688,15 +2731,28 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       `).join('') || '<li class="muted">No data yet.</li>';
       renderWatchlist();
       applyViewMode(safeSummary);
+      const lastKnown = safeSummary.latest_known_observed_at_human || safeSummary.latest_observed_at_human || '';
+      if (lastKnown) {
+        setSyncStatus(`Live • senast uppdaterad ${lastKnown}`);
+      } else {
+        setSyncStatus('Live • uppdaterad');
+      }
       } catch (err) {
         console.error('loadData failed:', err);
         const message = `Could not load live data (${escapeHtml(String(err && err.message ? err.message : err))}).`;
+        if (lastSummary) {
+          setSyncStatus(`Tillfälligt sync-fel, visar senaste data. (${String(err && err.message ? err.message : err)})`, true);
+          return;
+        }
         ['daily-topics', 'hot-topics', 'categories', 'clusters', 'reactions', 'recent', 'backtest'].forEach((id) => {
           const el = document.getElementById(id);
           if (el) el.innerHTML = `<li class="muted">${message}</li>`;
         });
         const status = document.getElementById('recent-status');
         if (status) status.textContent = message;
+        setSyncStatus('Kunde inte ladda live-data ännu.', true);
+      } finally {
+        loadInFlight = false;
       }
     }
     async function ensureAuth() {

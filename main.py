@@ -365,8 +365,10 @@ def poll_once(config=None, storage=None) -> int:
     for topic in config.topics:
         topic_spike_multiplier, topic_min_baseline = _topic_thresholds(topic, config)
         new_posts_by_source: dict[str, list] = {}
+        active_posts_by_source: dict[str, list] = {}
         triggering_alerts: list[Alert] = []
-        baselines_by_source: list[float] = []
+        new_baselines_by_source: list[float] = []
+        activity_baselines_by_source: list[float] = []
         for fetcher in fetchers:
             if fetcher.source_name == "reddit" and topic not in reddit_topics:
                 continue
@@ -378,6 +380,7 @@ def poll_once(config=None, storage=None) -> int:
                 log(f"{fetcher.source_name} fetch failed for {topic!r}: {exc}")
                 continue
 
+            filtered_posts = []
             new_posts = []
             for post in posts:
                 if config.require_item_timestamp and post.created_utc <= 0:
@@ -391,19 +394,21 @@ def poll_once(config=None, storage=None) -> int:
                     continue
                 if _contains_blocked_term(f"{post.title} {post.url}", config.blocked_terms):
                     continue
+                filtered_posts.append(post)
                 if not storage.has_seen_item(fetcher.source_name, topic, post.id):
                     new_posts.append(post)
 
             if new_posts:
                 storage.mark_seen_items(fetcher.source_name, topic, (post.id for post in new_posts))
             new_posts_by_source[fetcher.source_name] = new_posts
+            active_posts_by_source[fetcher.source_name] = filtered_posts
 
             observation = Observation(
                 topic=topic,
                 source=fetcher.source_name,
                 observed_at=now,
                 new_mentions=len(new_posts),
-                fetched_mentions=len(posts),
+                fetched_mentions=len(filtered_posts),
             )
             storage.add_observation(observation)
 
@@ -414,7 +419,17 @@ def poll_once(config=None, storage=None) -> int:
             )
             previous_values = [obs.new_mentions for obs in history[:-1]]
             baseline = mean(previous_values[-config.window_size:]) if previous_values else 0.0
-            baselines_by_source.append(baseline)
+            new_baselines_by_source.append(baseline)
+            previous_activity_values = [
+                max(int(obs.new_mentions), int(obs.fetched_mentions or 0))
+                for obs in history[:-1]
+            ]
+            activity_baseline = (
+                mean(previous_activity_values[-config.window_size:])
+                if previous_activity_values
+                else 0.0
+            )
+            activity_baselines_by_source.append(activity_baseline)
             alert = analyze_topic(
                 topic=topic,
                 source=fetcher.source_name,
@@ -442,24 +457,39 @@ def poll_once(config=None, storage=None) -> int:
                 )
 
             log(
-                f"{topic!r} [{fetcher.source_name}]: +{len(new_posts)} filtered matches "
-                f"({len(posts)} fetched)"
+                f"{topic!r} [{fetcher.source_name}]: +{len(new_posts)} new matches "
+                f"({len(filtered_posts)} active / {len(posts)} fetched)"
             )
 
             if alert:
                 triggering_alerts.append(alert)
 
-        combined_posts = []
+        combined_new_posts = []
         for posts in new_posts_by_source.values():
-            combined_posts.extend(posts)
-        combined_posts = dedupe_feed_items(combined_posts, config.blocked_terms)
-        source_count = sum(1 for posts in new_posts_by_source.values() if posts)
-        cluster_signal = extract_trend_signal(combined_posts, config.blocked_terms, topic)
+            combined_new_posts.extend(posts)
+        combined_new_posts = dedupe_feed_items(combined_new_posts, config.blocked_terms)
+
+        combined_active_posts = []
+        for posts in active_posts_by_source.values():
+            combined_active_posts.extend(posts)
+        combined_active_posts = dedupe_feed_items(combined_active_posts, config.blocked_terms)
+
+        source_count = sum(1 for posts in active_posts_by_source.values() if posts)
+        signal_posts = combined_active_posts or combined_new_posts
+        if not signal_posts:
+            if config.debug_mode:
+                log(f"debug no active trend signal for {topic!r} this cycle")
+            continue
+        cluster_signal = extract_trend_signal(signal_posts, config.blocked_terms, topic)
         cluster_label = cluster_signal.label if cluster_signal else topic
         cluster_key = normalize_cluster_key(cluster_label)
-        combined_mentions = len(combined_posts)
-        latest_published_at = max((int(post.created_utc or 0) for post in combined_posts), default=0)
-        combined_baseline = mean(baselines_by_source) if baselines_by_source else 0.0
+        combined_mentions = len(combined_active_posts or combined_new_posts)
+        latest_published_at = max((int(post.created_utc or 0) for post in signal_posts), default=0)
+        combined_baseline = (
+            mean(activity_baselines_by_source)
+            if activity_baselines_by_source
+            else (mean(new_baselines_by_source) if new_baselines_by_source else 0.0)
+        )
         signal_strength = float(cluster_signal.score) if cluster_signal else 0.0
         rollup_score = score_trend(
             current=combined_mentions,
@@ -489,7 +519,7 @@ def poll_once(config=None, storage=None) -> int:
                 cluster_label=cluster_label,
                 trend_score=rollup_score,
                 example_title=cluster_signal.example_title if cluster_signal else "",
-                market_scope=_infer_market_scope(new_posts_by_source),
+                market_scope=_infer_market_scope(active_posts_by_source),
             )
         )
 

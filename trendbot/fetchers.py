@@ -27,10 +27,36 @@ _TOPIC_SOFT_TERMS = {
     "svenska",
     "sverige",
     "sweden",
+    "global",
+    "america",
+    "english",
     "nöje",
     "noje",
     "popkultur",
     "popculture",
+    "pop",
+    "culture",
+    "news",
+    "nyheter",
+    "music",
+    "musik",
+    "tv",
+    "film",
+    "movie",
+    "movies",
+    "politics",
+    "gaming",
+    "internet",
+    "viral",
+    "trends",
+    "celebrity",
+    "influencer",
+    "streamers",
+    "youtube",
+    "podcasts",
+    "streaming",
+    "fashion",
+    "sports",
 }
 
 
@@ -46,8 +72,8 @@ def _topic_match_terms(topic: str | List[str]) -> tuple[List[str], bool]:
     significant = [term for term in base_terms if term not in _TOPIC_SOFT_TERMS]
     if significant:
         return (significant, False)
-    # If all tokens are soft/generic, fall back to strict match to avoid flooding.
-    return (base_terms, True)
+    # If all tokens are soft/generic, use loose matching (not strict-all) so feeds still produce signals.
+    return (base_terms, False)
 
 
 def _matches_topic_terms(terms: List[str], haystack: str, strict_all: bool = False) -> bool:
@@ -56,7 +82,13 @@ def _matches_topic_terms(terms: List[str], haystack: str, strict_all: bool = Fal
     if strict_all:
         return all(term in haystack for term in terms)
     matches = sum(1 for term in terms if term in haystack)
-    required = max(1, (len(terms) + 1) // 2)
+    # Quarter-threshold keeps matching resilient when topic terms are generic/multi-word.
+    if len(terms) <= 3:
+        required = 1
+    elif len(terms) <= 8:
+        required = 2
+    else:
+        required = 3
     return matches >= required
 
 
@@ -219,6 +251,8 @@ class GoogleNewsFetcher:
         gl: str = "US",
         ceid: str = "US:en",
         query_suffix: str = "",
+        refresh_seconds: int = 300,
+        stale_fallback_seconds: int = 3600,
     ) -> None:
         self.limit = limit
         self.timeout_seconds = timeout_seconds
@@ -226,8 +260,19 @@ class GoogleNewsFetcher:
         self.gl = gl
         self.ceid = ceid
         self.query_suffix = (query_suffix or "").strip()
+        self.refresh_seconds = max(30, int(refresh_seconds))
+        self.stale_fallback_seconds = max(self.refresh_seconds, int(stale_fallback_seconds))
+        self._cache_by_topic: dict[str, tuple[int, List[FeedItem]]] = {}
 
     def search(self, topic: str) -> List[FeedItem]:
+        now = int(time.time())
+        cache_key = topic.strip().lower()
+        cached_entry = self._cache_by_topic.get(cache_key)
+        if cached_entry:
+            cached_at, cached_items = cached_entry
+            if now - cached_at < self.refresh_seconds:
+                return cached_items
+
         query_text = topic
         if self.query_suffix:
             query_text = f"{topic} {self.query_suffix}"
@@ -247,13 +292,21 @@ class GoogleNewsFetcher:
                 "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.8",
             },
         )
-        with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-            payload = response.read()
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                payload = response.read()
+        except Exception:
+            if cached_entry:
+                cached_at, cached_items = cached_entry
+                if now - cached_at < self.stale_fallback_seconds:
+                    return cached_items
+            raise
 
         items: List[FeedItem] = []
         root = ET.fromstring(payload)
         channel = root.find("channel")
         if channel is None:
+            self._cache_by_topic[cache_key] = (now, items)
             return items
 
         for item in channel.findall("item")[: self.limit]:
@@ -276,6 +329,7 @@ class GoogleNewsFetcher:
                     summary=description,
                 )
             )
+        self._cache_by_topic[cache_key] = (now, items)
         return items
 
     @staticmethod
@@ -338,14 +392,25 @@ class RSSFetcher:
                 with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                     payload = response.read()
             except urllib.error.HTTPError as exc:
+                if self._cached_items:
+                    # Keep serving stale cache during transient upstream failures.
+                    self._cached_at_utc = now
+                    return self._filter_items(self._cached_items, topic)
                 if exc.code in {404, 429}:
                     self._cached_items = []
                     self._cached_at_utc = now
                     return []
                 raise
-            self._cached_items = self._parse_feed(payload)
+            except urllib.error.URLError:
+                if self._cached_items:
+                    self._cached_at_utc = now
+                    return self._filter_items(self._cached_items, topic)
+                raise
+            parsed_items = self._parse_feed(payload)
+            if parsed_items or self._cached_items is None:
+                self._cached_items = parsed_items
             self._cached_at_utc = now
-        return self._filter_items(self._cached_items, topic)
+        return self._filter_items(self._cached_items or [], topic)
 
     def _parse_feed(self, payload: bytes) -> List[FeedItem]:
         try:
