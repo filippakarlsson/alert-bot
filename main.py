@@ -330,9 +330,15 @@ def _build_fetchers(config):
     return fetchers
 
 
-def _infer_market_scope(new_posts_by_source: dict[str, list]) -> str:
+def _infer_market_scope(new_posts_by_source: dict[str, list], swedish_only_mode: bool = False) -> str:
+    def _scope_for_source(source: str) -> str:
+        # In Swedish-only mode, TikTok web queries are Swedish-targeted and should stay in Swedish scope.
+        if swedish_only_mode and source == "tiktok_web":
+            return "sweden"
+        return SOURCE_SCOPE.get(source, "global")
+
     scopes = {
-        SOURCE_SCOPE.get(source, "global")
+        _scope_for_source(source)
         for source, posts in new_posts_by_source.items()
         if posts
     }
@@ -519,7 +525,7 @@ def poll_once(config=None, storage=None) -> int:
                 cluster_label=cluster_label,
                 trend_score=rollup_score,
                 example_title=cluster_signal.example_title if cluster_signal else "",
-                market_scope=_infer_market_scope(active_posts_by_source),
+                market_scope=_infer_market_scope(active_posts_by_source, config.swedish_only_mode),
             )
         )
 

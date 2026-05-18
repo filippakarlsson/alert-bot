@@ -586,7 +586,23 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
             hot_topics = _topics_for_window(lookback_used_seconds, 40, 1)[:10]
         if not hot_topics and top_topic_candidates:
             hot_topics = top_topic_candidates[:10]
-    sticky_key = "dashboard:sticky_top10:v1"
+    # Merge daily + hot so fresh stories can enter without wiping the whole ranking.
+    merged_candidates: dict[str, Any] = {}
+    for item in list(top_topic_candidates) + list(hot_topics):
+        if not item.cluster_key:
+            continue
+        current = merged_candidates.get(item.cluster_key)
+        if current is None:
+            merged_candidates[item.cluster_key] = item
+            continue
+        # Prefer stronger signal, then recency.
+        current_score = (current.total_mentions, current.latest_observed_at, current.trend_score)
+        new_score = (item.total_mentions, item.latest_observed_at, item.trend_score)
+        if new_score > current_score:
+            merged_candidates[item.cluster_key] = item
+    top_topic_candidates = list(merged_candidates.values())
+
+    sticky_key = "dashboard:sticky_top10:v2"
     previous_raw = storage.get_state(sticky_key)
     previous_keys: list[str] = []
     if previous_raw:
@@ -598,19 +614,31 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
             previous_keys = []
     previous_rank = {key: idx for idx, key in enumerate(previous_keys)}
 
-    def _sticky_score(item) -> float:
-        base = float(item.total_mentions)
-        idx = previous_rank.get(item.cluster_key)
-        if idx is None:
-            return base
-        # Hysteresis: previously ranked items get a modest bonus, but can still drop if clearly weaker.
-        return base + 0.9 + max(0.0, (10 - idx) * 0.06)
+    candidates_by_key = {item.cluster_key: item for item in top_topic_candidates if item.cluster_key}
+    max_mentions = max((item.total_mentions for item in top_topic_candidates), default=0)
+    retain_floor = max(2, int(max_mentions * 0.25)) if max_mentions > 0 else 2
 
-    top_topics = sorted(
-        top_topic_candidates,
-        key=lambda item: (_sticky_score(item), item.latest_observed_at, item.trend_score),
-        reverse=True,
-    )[:10]
+    # Keep previous ranked topics unless they become clearly weak.
+    sticky_topics: list[Any] = []
+    for key in previous_keys:
+        item = candidates_by_key.get(key)
+        if not item:
+            continue
+        if item.total_mentions >= retain_floor:
+            sticky_topics.append(item)
+
+    # Fill with strongest remaining candidates.
+    used_keys = {item.cluster_key for item in sticky_topics}
+    remaining = [item for item in top_topic_candidates if item.cluster_key not in used_keys]
+    remaining.sort(key=lambda item: (item.total_mentions, item.latest_observed_at, item.trend_score), reverse=True)
+    top_topics = (sticky_topics + remaining)[:10]
+
+    # If we still have fewer than 10, backfill with the strongest daily candidates.
+    if len(top_topics) < 10:
+        already = {item.cluster_key for item in top_topics}
+        backfill = [item for item in _topics_for_window(86400 * 3, 120, max(1, min_daily_mentions - 1)) if item.cluster_key not in already]
+        backfill.sort(key=lambda item: (item.total_mentions, item.latest_observed_at, item.trend_score), reverse=True)
+        top_topics.extend(backfill[: 10 - len(top_topics)])
     storage.set_state(sticky_key, json.dumps([item.cluster_key for item in top_topics]))
     top_categories = storage.top_categories_since(
         now - lookback_used_seconds,
@@ -2305,7 +2333,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     function whyTrendingChips(item) {
       const chips = [];
       chips.push(`${item.total_mentions || 0} mentions`);
-      chips.push(`${item.source_count || 0} sources`);
+      chips.push(`${item.source_count || 0} källor med träff`);
       if ((item.trend_score || 0) >= 85) chips.push('high heat');
       if ((item.latest_observed_at || 0) >= (nowUtcSeconds() - 7200)) chips.push('very fresh');
       const t = topicText(item);
@@ -2422,7 +2450,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
               <div class="score">${item.trend_score.toFixed(1)}</div>
             </div>
           </div>
-          <div class="muted">${item.total_mentions} mentions across ${item.samples} samples • ${item.source_count} sources • seen ${item.latest_observed_at_human} • published ${item.latest_published_at_human || '-'}</div>
+          <div class="muted">${item.total_mentions} mentions across ${item.samples} samples • ${item.source_count} källor med träff • seen ${item.latest_observed_at_human} • published ${item.latest_published_at_human || '-'}</div>
           ${chipsHtml(item)}
           <div class="muted">Cluster: ${escapeHtml(item.cluster_label || item.topic)}</div>
           <div class="muted">Trend score: ${item.trend_score.toFixed(1)} / 100</div>
@@ -2625,7 +2653,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
               <div class="score">${item.total_mentions}</div>
             </div>
           </div>
-          <div class="muted">${item.total_mentions} mentions • ${item.source_count} sources • seen ${item.latest_observed_at_human} • published ${item.latest_published_at_human || '-'}</div>
+          <div class="muted">${item.total_mentions} mentions • ${item.source_count} källor med träff • seen ${item.latest_observed_at_human} • published ${item.latest_published_at_human || '-'}</div>
           ${chipsHtml(item)}
           ${item.example_title ? `<div class="muted">${escapeHtml(item.example_title)}</div>` : ''}
         </li>
