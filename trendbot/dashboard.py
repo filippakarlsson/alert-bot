@@ -1771,6 +1771,17 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       </div>
     </div>
   </div>
+  <div id="plan-overlay" class="login-overlay">
+    <div class="login-card">
+      <button id="plan-close" class="login-close" type="button" aria-label="Stäng meddelande">✕</button>
+      <h2>Oj, betalning finns inte än</h2>
+      <p class="muted">Köpflödet är inte live ännu. Du kan läsa mer på hemsidan.</p>
+      <div class="control-row" style="margin-top:10px;">
+        <a class="control-btn" href="https://trendbot.se" target="_blank" rel="noreferrer">Till hemsidan</a>
+        <button id="plan-test-login" class="control-btn" type="button">Jag har testkonto</button>
+      </div>
+    </div>
+  </div>
   <header>
     <div class="topbar">
       <h1>TrendBot Dashboard</h1>
@@ -2225,6 +2236,8 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     let loadInFlight = false;
     const WATCHLIST_KEY = 'trendbot_watchlist_v1';
     const THEME_KEY = 'trendbot_theme_v1';
+    const BOOTSTRAP_SUMMARY = (BOOTSTRAP_DATA && BOOTSTRAP_DATA.summary) ? BOOTSTRAP_DATA.summary : null;
+    const BOOTSTRAP_RECENT = (BOOTSTRAP_DATA && BOOTSTRAP_DATA.recent) ? BOOTSTRAP_DATA.recent : null;
     function nowUtcSeconds() {
       return Math.floor(Date.now() / 1000);
     }
@@ -2612,30 +2625,27 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       document.getElementById('topic-media-links').innerHTML = mediaSources(selected.topic).map((x) => `<a class="chip" href="${x.url}" target="_blank" rel="noreferrer">${escapeHtml(x.label)}</a>`).join('');
       updateWatchlistButton();
     }
-    async function loadData() {
-      if (loadInFlight) return;
-      loadInFlight = true;
-      setSyncStatus('Synkar live-data...');
-      try {
-        const scopeQuery = `?scope=${encodeURIComponent(marketScope)}`;
-        const [summary, recent] = await Promise.all([
-          fetchApiJson(`/api/summary${scopeQuery}`),
-          fetchApiJson(`/api/recent${scopeQuery}`),
-        ]);
-        const safeSummary = summary || {};
-        const safeRecent = recent || {};
-        safeSummary.top_topics = Array.isArray(safeSummary.top_topics) ? safeSummary.top_topics : [];
-        safeSummary.hot_topics = Array.isArray(safeSummary.hot_topics) ? safeSummary.hot_topics : [];
-        safeSummary.category_movers = Array.isArray(safeSummary.category_movers) ? safeSummary.category_movers : [];
-        safeSummary.top_clusters = Array.isArray(safeSummary.top_clusters) ? safeSummary.top_clusters : [];
-        safeSummary.reaction_topics = Array.isArray(safeSummary.reaction_topics) ? safeSummary.reaction_topics : [];
-        safeSummary.featured_series = Array.isArray(safeSummary.featured_series) ? safeSummary.featured_series : [];
-        safeSummary.cluster_multi_series = Array.isArray(safeSummary.cluster_multi_series) ? safeSummary.cluster_multi_series : [];
-        safeSummary.backtest = safeSummary.backtest || {};
-        safeRecent.items = Array.isArray(safeRecent.items) ? safeRecent.items : [];
-        safeRecent.total_new_mentions = Number(safeRecent.total_new_mentions || 0);
-        safeRecent.total_fetched_mentions = Number(safeRecent.total_fetched_mentions || 0);
-        lastRecent = safeRecent;
+    function normalizePayload(summary, recent) {
+      const safeSummary = summary || {};
+      const safeRecent = recent || {};
+      safeSummary.top_topics = Array.isArray(safeSummary.top_topics) ? safeSummary.top_topics : [];
+      safeSummary.hot_topics = Array.isArray(safeSummary.hot_topics) ? safeSummary.hot_topics : [];
+      safeSummary.category_movers = Array.isArray(safeSummary.category_movers) ? safeSummary.category_movers : [];
+      safeSummary.top_clusters = Array.isArray(safeSummary.top_clusters) ? safeSummary.top_clusters : [];
+      safeSummary.reaction_topics = Array.isArray(safeSummary.reaction_topics) ? safeSummary.reaction_topics : [];
+      safeSummary.featured_series = Array.isArray(safeSummary.featured_series) ? safeSummary.featured_series : [];
+      safeSummary.cluster_multi_series = Array.isArray(safeSummary.cluster_multi_series) ? safeSummary.cluster_multi_series : [];
+      safeSummary.backtest = safeSummary.backtest || {};
+      safeRecent.items = Array.isArray(safeRecent.items) ? safeRecent.items : [];
+      safeRecent.total_new_mentions = Number(safeRecent.total_new_mentions || 0);
+      safeRecent.total_fetched_mentions = Number(safeRecent.total_fetched_mentions || 0);
+      return { safeSummary, safeRecent };
+    }
+    function renderPayload(summary, recent) {
+      const normalized = normalizePayload(summary, recent);
+      const safeSummary = normalized.safeSummary;
+      const safeRecent = normalized.safeRecent;
+      lastRecent = safeRecent;
 
       renderTop10(safeSummary);
 
@@ -2765,9 +2775,26 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       } else {
         setSyncStatus('Live • uppdaterad');
       }
+    }
+    async function loadData() {
+      if (loadInFlight) return;
+      loadInFlight = true;
+      setSyncStatus('Synkar live-data...');
+      try {
+        const scopeQuery = `?scope=${encodeURIComponent(marketScope)}`;
+        const [summary, recent] = await Promise.all([
+          fetchApiJson(`/api/summary${scopeQuery}`),
+          fetchApiJson(`/api/recent${scopeQuery}`),
+        ]);
+        renderPayload(summary, recent);
       } catch (err) {
         console.error('loadData failed:', err);
         const message = `Could not load live data (${escapeHtml(String(err && err.message ? err.message : err))}).`;
+        if (!lastSummary && BOOTSTRAP_SUMMARY) {
+          renderPayload(BOOTSTRAP_SUMMARY, BOOTSTRAP_RECENT || { items: [] });
+          setSyncStatus('Visar senast publicerade snapshot (offline-läge).', true);
+          return;
+        }
         if (lastSummary) {
           setSyncStatus(`Tillfälligt sync-fel, visar senaste data. (${String(err && err.message ? err.message : err)})`, true);
           return;
@@ -2831,9 +2858,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     }
     async function doLogout() {
       if (userRole === 'lite') {
-        const status = document.getElementById('login-status');
-        if (status) status.textContent = '';
-        document.getElementById('login-overlay').style.display = 'flex';
+        openPlanOverlay();
         return;
       }
       try {
@@ -2847,6 +2872,16 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       if (pw) pw.value = '';
       document.getElementById('login-overlay').style.display = 'none';
       loadData();
+    }
+    function openLoginOverlay() {
+      const status = document.getElementById('login-status');
+      if (status) status.textContent = '';
+      document.getElementById('plan-overlay').style.display = 'none';
+      document.getElementById('login-overlay').style.display = 'flex';
+    }
+    function openPlanOverlay() {
+      document.getElementById('login-overlay').style.display = 'none';
+      document.getElementById('plan-overlay').style.display = 'flex';
     }
     function forceRefresh() {
       const url = new URL(window.location.href);
@@ -2994,6 +3029,12 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       if (status) status.textContent = '';
       document.getElementById('login-overlay').style.display = 'none';
     });
+    document.getElementById('plan-close').addEventListener('click', () => {
+      document.getElementById('plan-overlay').style.display = 'none';
+    });
+    document.getElementById('plan-test-login').addEventListener('click', () => {
+      openLoginOverlay();
+    });
     applyRoleUI();
     document.getElementById('login-submit').addEventListener('click', doLogin);
     document.getElementById('login-password').addEventListener('keydown', (e) => {
@@ -3009,6 +3050,10 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         askPostAI();
       }
     });
+    if (BOOTSTRAP_SUMMARY) {
+      renderPayload(BOOTSTRAP_SUMMARY, BOOTSTRAP_RECENT || { items: [] });
+      setSyncStatus('Visar publicerad snapshot...');
+    }
     ensureAuth().then(() => loadData());
     setInterval(loadData, 15000);
   </script>
@@ -3055,11 +3100,13 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/summary"):
             scope = parse_qs(urlparse(self.path).query).get("scope", [""])[0].strip().lower()
             market_scope = scope if scope in {"sweden", "global"} else None
+            self._maybe_trigger_on_demand_refresh("summary", market_scope)
             self._send_json(self._summary_payload(market_scope))
             return
         if self.path.startswith("/api/recent"):
             scope = parse_qs(urlparse(self.path).query).get("scope", [""])[0].strip().lower()
             market_scope = scope if scope in {"sweden", "global"} else None
+            self._maybe_trigger_on_demand_refresh("recent", market_scope)
             self._send_json(self._recent_payload(market_scope))
             return
         if self.path.startswith("/api/media"):
@@ -3198,6 +3245,46 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             "start": (self.settings.get("dashboard_start_password") or "").strip(),
             "pro": (self.settings.get("dashboard_pro_password") or "").strip(),
         }
+
+    def _latest_observed_at(self) -> int:
+        items = self.storage.recent_observations_global(1)
+        if not items:
+            return 0
+        return int(items[0].observed_at or 0)
+
+    def _maybe_trigger_on_demand_refresh(self, reason: str, market_scope: str | None = None) -> None:
+        callback = self.settings.get("on_demand_refresh")
+        if not callable(callback):
+            return
+        stale_refresh_seconds = int(self.settings.get("stale_refresh_seconds") or 900)
+        wait_seconds = float(self.settings.get("on_demand_wait_seconds") or 8.0)
+        poll_seconds = float(self.settings.get("on_demand_wait_poll_seconds") or 0.4)
+        now = int(time.time())
+        before_latest = self._latest_observed_at()
+        age = now - before_latest if before_latest else 10**9
+        if age < stale_refresh_seconds:
+            return
+        try:
+            refreshed = bool(
+                callback(
+                    reason=reason,
+                    market_scope=market_scope,
+                    stale_age_seconds=age,
+                )
+            )
+        except Exception:
+            refreshed = False
+        if refreshed:
+            return
+        # If a poll is already running in another thread, wait briefly for fresh rows.
+        if wait_seconds <= 0:
+            return
+        deadline = time.time() + wait_seconds
+        while time.time() < deadline:
+            latest = self._latest_observed_at()
+            if latest > before_latest:
+                return
+            time.sleep(max(0.05, poll_seconds))
 
     def _verify_password(self, provided: str, stored: str) -> bool:
         # Strict format only:

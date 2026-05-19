@@ -1,0 +1,65 @@
+name: Refresh Trend Dashboard
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: trendbot-refresh
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate fresh snapshot
+        env:
+          DASHBOARD_ENABLED: "false"
+          DASHBOARD_SNAPSHOT_PATH: "public/gratisversion/index.html"
+          TRENDBOT_DB_PATH: "data/trendbot.sqlite3"
+          SWEDISH_ONLY_MODE: "true"
+          REDDIT_ENABLED: "false"
+          ENABLE_SOURCE_GOOGLE_GLOBAL: "false"
+          ENABLE_SOURCE_BBC: "false"
+          ENABLE_SOURCE_NPR: "false"
+          ENABLE_SOURCE_AP: "false"
+          ENABLE_SOURCE_VARIETY: "false"
+          ENABLE_SOURCE_BILLBOARD: "false"
+          ENABLE_SOURCE_THE_VERGE: "false"
+          ENABLE_SOURCE_PEOPLE: "false"
+          ENABLE_SOURCE_EONLINE: "false"
+          ENABLE_SOURCE_TMZ: "false"
+          ENABLE_SOURCE_ROLLINGSTONE: "false"
+          POLL_INTERVAL_SECONDS: "300"
+          RSS_REFRESH_SECONDS: "300"
+          GOOGLE_NEWS_RECENCY_QUERY: "when:2d"
+          TRENDBOT_TOPICS_ACTIVE: "${{ vars.TRENDBOT_TOPICS_ACTIVE }}"
+        run: |
+          mkdir -p public/gratisversion data
+          python3 main.py once
+
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet -- public/gratisversion/index.html data/trendbot.sqlite3; then
+            echo "No dashboard changes to commit."
+            exit 0
+          fi
+          git config user.name "trendbot-bot"
+          git config user.email "trendbot-bot@users.noreply.github.com"
+          git add public/gratisversion/index.html data/trendbot.sqlite3
+          git commit -m "chore: refresh dashboard snapshot [skip ci]"
+          git push
