@@ -1786,7 +1786,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     <div class="topbar">
       <h1>TrendBot Dashboard</h1>
       <nav class="nav-links">
-        <span id="role-badge" class="pill" style="margin-right:6px;">Plan: Start</span>
+        <span id="role-badge" class="pill" style="margin-right:6px;">Plan: Free</span>
         <a id="nav-home" class="nav-link" href="https://trendbot.se" rel="noreferrer">Hem</a>
         <a id="nav-dashboard" class="nav-link" href="?">Dashboard</a>
         <a id="nav-topic" class="nav-link" href="?view=topic">Topic</a>
@@ -2477,27 +2477,32 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         </li>
       `).join('');
     }
-    document.getElementById('top10-select').addEventListener('change', (event) => {
+    function onElement(id, eventName, handler) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener(eventName, handler);
+    }
+    onElement('top10-select', 'change', (event) => {
       top10SelectedKey = event.target.value;
       if (lastSummary) {
         renderTop10(lastSummary);
       }
     });
-    document.getElementById('top10-more').addEventListener('click', () => {
+    onElement('top10-more', 'click', () => {
       top10ShowAll = !top10ShowAll;
       if (lastSummary) {
         renderTop10(lastSummary);
       }
     });
-    document.getElementById('watchlist-toggle').addEventListener('click', () => {
+    onElement('watchlist-toggle', 'click', () => {
       toggleWatchlistCurrent();
     });
-    document.getElementById('scope-sweden').addEventListener('click', async () => {
+    onElement('scope-sweden', 'click', async () => {
       marketScope = 'sweden';
       applyScopeButtons();
       await loadData();
     });
-    document.getElementById('scope-global').addEventListener('click', async () => {
+    onElement('scope-global', 'click', async () => {
       if ((ROLE_RANK[userRole] || 0) < (ROLE_RANK.start || 1)) {
         marketScope = 'sweden';
         applyScopeButtons();
@@ -3034,34 +3039,34 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     applyScopeButtons();
     initTheme();
     initCookieConsent();
-    document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
-    document.getElementById('refresh-btn').addEventListener('click', forceRefresh);
-    document.getElementById('logout-btn').addEventListener('click', doLogout);
-    document.getElementById('nav-home').addEventListener('click', (e) => {
+    onElement('theme-toggle', 'click', toggleTheme);
+    onElement('refresh-btn', 'click', forceRefresh);
+    onElement('logout-btn', 'click', doLogout);
+    onElement('nav-home', 'click', (e) => {
       e.preventDefault();
       window.location.href = 'https://trendbot.se';
     });
-    document.getElementById('login-close').addEventListener('click', () => {
+    onElement('login-close', 'click', () => {
       const status = document.getElementById('login-status');
       if (status) status.textContent = '';
       document.getElementById('login-overlay').style.display = 'none';
     });
-    document.getElementById('plan-close').addEventListener('click', () => {
+    onElement('plan-close', 'click', () => {
       document.getElementById('plan-overlay').style.display = 'none';
     });
-    document.getElementById('plan-test-login').addEventListener('click', () => {
+    onElement('plan-test-login', 'click', () => {
       openLoginOverlay();
     });
     applyRoleUI();
-    document.getElementById('login-submit').addEventListener('click', doLogin);
-    document.getElementById('login-password').addEventListener('keydown', (e) => {
+    onElement('login-submit', 'click', doLogin);
+    onElement('login-password', 'keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
         doLogin();
       }
     });
-    document.getElementById('post-ai-ask').addEventListener('click', askPostAI);
-    document.getElementById('post-ai-question').addEventListener('keydown', (e) => {
+    onElement('post-ai-ask', 'click', askPostAI);
+    onElement('post-ai-question', 'keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
         askPostAI();
