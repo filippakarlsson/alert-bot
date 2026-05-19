@@ -67,7 +67,12 @@ def _looks_like_previous_year_story(text: str, current_year: int) -> bool:
 
 def _topic_thresholds(topic: str, config):
     lowered = topic.lower()
-    if "pop culture" in lowered or "celebrity" in lowered:
+    if (
+        "popkultur" in lowered
+        or "nöje" in lowered
+        or "kändis" in lowered
+        or "kändisar" in lowered
+    ):
         return config.pop_culture_spike_multiplier, config.pop_culture_min_baseline
     return config.spike_multiplier, config.min_baseline
 

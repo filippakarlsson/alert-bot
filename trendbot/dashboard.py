@@ -2262,13 +2262,13 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         return ['svensk', 'sverige', 'melodifestivalen', 'tv4', 'svt', 'nöje'].some((x) => text.includes(x));
       }
       if (activeFilter === 'drama') {
-        return ['drama', 'skandal', 'bråk', 'chock', 'rasar', 'kritik', 'backlash', 'controversy'].some((x) => text.includes(x));
+        return ['drama', 'skandal', 'bråk', 'chock', 'rasar', 'kritik', 'storm', 'konflikt'].some((x) => text.includes(x));
       }
       if (activeFilter === 'tv') {
-        return ['tv', 'serie', 'program', 'svt', 'tv4', 'idol', 'lets dance', 'masked singer'].some((x) => text.includes(x));
+        return ['tv', 'serie', 'program', 'svt', 'tv4', 'idol', 'let\'s dance', 'masked singer', 'förrädarna', 'paradise hotel'].some((x) => text.includes(x));
       }
       if (activeFilter === 'musik') {
-        return ['musik', 'music', 'song', 'album', 'k-pop', 'eurovision', 'melodifestivalen'].some((x) => text.includes(x));
+        return ['musik', 'låt', 'album', 'k-pop', 'eurovision', 'melodifestivalen', 'artist', 'turné'].some((x) => text.includes(x));
       }
       return true;
     }

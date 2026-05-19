@@ -109,7 +109,12 @@ def load_config() -> Config:
     topics_raw = os.getenv("TRENDBOT_TOPICS_ACTIVE", "").strip()
     topics = _csv_env(
         "TRENDBOT_TOPICS_ACTIVE" if topics_raw else "TRENDBOT_TOPICS",
-        "pop culture,music,politics,news,movies,tv,celebrity,K-pop,Eurovision,TikTok,influencer,streamers,youtube,memes,viral trends,internet culture,creator economy,viral video,gaming,podcasts,streaming,fashion,sports",
+        (
+            "nöje,musik,politik,nyheter,film,tv,kändisar,k-pop,eurovision,tiktok,"
+            "influencer,streamers,youtube,memes,virala trender,internetkultur,"
+            "skaparekonomi,viralt klipp,spel,poddar,streaming,mode,sport,reality tv,"
+            "paradise hotel,förrädarna,ex on the beach,love island,bachelor"
+        ),
     )
     return Config(
         discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", "").strip(),
@@ -154,9 +159,9 @@ def load_config() -> Config:
         reddit_request_delay_seconds=float(os.getenv("REDDIT_REQUEST_DELAY_SECONDS", "1.2")),
         reddit_backoff_seconds=int(os.getenv("REDDIT_BACKOFF_SECONDS", "1800")),
         rss_refresh_seconds=int(os.getenv("RSS_REFRESH_SECONDS", "300")),
-        google_news_hl=os.getenv("GOOGLE_NEWS_HL", "en-US").strip(),
-        google_news_gl=os.getenv("GOOGLE_NEWS_GL", "US").strip(),
-        google_news_ceid=os.getenv("GOOGLE_NEWS_CEID", "US:en").strip(),
+        google_news_hl=os.getenv("GOOGLE_NEWS_HL", "sv-SE").strip(),
+        google_news_gl=os.getenv("GOOGLE_NEWS_GL", "SE").strip(),
+        google_news_ceid=os.getenv("GOOGLE_NEWS_CEID", "SE:sv").strip(),
         google_news_recency_query=os.getenv("GOOGLE_NEWS_RECENCY_QUERY", "when:2d").strip(),
         swedish_only_mode=swedish_only_mode,
         max_item_age_hours=int(os.getenv("MAX_ITEM_AGE_HOURS", "72")),

@@ -16,17 +16,14 @@ def categorize_topic(topic: str) -> str:
     if any(
         term in lowered
         for term in {
-            "politics",
-            "political",
-            "election",
-            "government",
-            "congress",
-            "parliament",
+            "politik",
+            "politiskt",
+            "val",
+            "regering",
+            "riksdag",
             "president",
-            "prime minister",
-            "white house",
-            "senate",
-            "mp",
+            "statsminister",
+            "minister",
             "trump",
             "biden",
             "putin",
@@ -36,15 +33,15 @@ def categorize_topic(topic: str) -> str:
         }
     ):
         return "politics"
-    if any(term in lowered for term in {"pop culture", "celebrity", "movie", "movies", "tv", "film", "festival", "award"}):
+    if any(term in lowered for term in {"popkultur", "nöje", "kändis", "kändisar", "film", "tv", "serie", "festival", "galan"}):
         return "pop_culture"
-    if any(term in lowered for term in {"music", "k-pop", "eurovision", "album", "song", "artist", "tour"}):
+    if any(term in lowered for term in {"musik", "k-pop", "eurovision", "melodifestivalen", "album", "låt", "artist", "turné"}):
         return "music"
-    if any(term in lowered for term in {"news", "breaking", "world", "update", "headline"}):
+    if any(term in lowered for term in {"nyhet", "nyheter", "senaste", "världen", "uppdatering", "rubrik"}):
         return "news"
-    if any(term in lowered for term in {"tiktok", "youtube", "influencer", "streamer", "streamers", "memes", "viral", "internet", "creator", "creator economy"}):
+    if any(term in lowered for term in {"tiktok", "youtube", "influencer", "streamer", "streamers", "meme", "memes", "viral", "internet", "skaparekonomi"}):
         return "internet"
-    if any(term in lowered for term in {"gaming", "game", "esports", "streaming", "podcast", "podcasts"}):
+    if any(term in lowered for term in {"spel", "gaming", "esport", "streaming", "podd", "poddar"}):
         return "gaming"
     return "default"
 

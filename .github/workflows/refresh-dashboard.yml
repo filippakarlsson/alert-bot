@@ -47,7 +47,7 @@ jobs:
           POLL_INTERVAL_SECONDS: "300"
           RSS_REFRESH_SECONDS: "300"
           GOOGLE_NEWS_RECENCY_QUERY: "when:2d"
-          TRENDBOT_TOPICS_ACTIVE: "${{ vars.TRENDBOT_TOPICS_ACTIVE }}"
+          TRENDBOT_TOPICS_ACTIVE: "nöje,musik,politik,nyheter,film,tv,kändisar,k-pop,eurovision,tiktok,influencer,streamers,youtube,memes,virala trender,internetkultur,skaparekonomi,viralt klipp,spel,poddar,streaming,mode,sport,reality tv,paradise hotel,förrädarna,ex on the beach,love island,bachelor"
         run: |
           mkdir -p public/gratisversion data
           python3 main.py once
