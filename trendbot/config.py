@@ -96,6 +96,9 @@ class Config:
     enable_source_nyheter24_noje: bool
     enable_source_svt: bool
     enable_source_tv4: bool
+    enable_source_seochhor: bool
+    enable_source_allas: bool
+    enable_source_elle: bool
     enable_source_tiktok: bool
     db_path: str
 
@@ -179,6 +182,9 @@ def load_config() -> Config:
         enable_source_nyheter24_noje=_bool_env("ENABLE_SOURCE_NYHETER24_NOJE", "true"),
         enable_source_svt=_bool_env("ENABLE_SOURCE_SVT", "true"),
         enable_source_tv4=_bool_env("ENABLE_SOURCE_TV4", "true"),
+        enable_source_seochhor=_bool_env("ENABLE_SOURCE_SEOCHHOR", "true"),
+        enable_source_allas=_bool_env("ENABLE_SOURCE_ALLAS", "true"),
+        enable_source_elle=_bool_env("ENABLE_SOURCE_ELLE", "true"),
         enable_source_tiktok=_bool_env("ENABLE_SOURCE_TIKTOK", "false"),
         db_path=os.getenv("TRENDBOT_DB_PATH", "trendbot.sqlite3"),
     )

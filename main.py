@@ -4,6 +4,7 @@ import sys
 import time
 import re
 import os
+import threading
 from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -28,6 +29,9 @@ SOURCE_SCOPE: dict[str, str] = {
     "nyheter24_noje": "sweden",
     "svt_noje": "sweden",
     "tv4_noje": "sweden",
+    "seochhor_noje": "sweden",
+    "allas_noje": "sweden",
+    "elle_noje": "sweden",
     "google_news_global": "global",
     "bbc_entertainment": "global",
     "npr_music": "global",
@@ -304,6 +308,39 @@ def _build_fetchers(config):
         )
         tv4.source_name = "tv4_noje"
         fetchers.append(tv4)
+    if config.enable_source_seochhor:
+        seochhor = GoogleNewsFetcher(
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+            hl="sv-SE",
+            gl="SE",
+            ceid="SE:sv",
+            query_suffix=f"site:seochhor.se nöje kändisar {recency_suffix}".strip(),
+        )
+        seochhor.source_name = "seochhor_noje"
+        fetchers.append(seochhor)
+    if config.enable_source_allas:
+        allas = GoogleNewsFetcher(
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+            hl="sv-SE",
+            gl="SE",
+            ceid="SE:sv",
+            query_suffix=f"site:allas.se nöje kändisar {recency_suffix}".strip(),
+        )
+        allas.source_name = "allas_noje"
+        fetchers.append(allas)
+    if config.enable_source_elle:
+        elle = GoogleNewsFetcher(
+            limit=config.reddit_limit,
+            timeout_seconds=config.reddit_timeout_seconds,
+            hl="sv-SE",
+            gl="SE",
+            ceid="SE:sv",
+            query_suffix=f"site:elle.se nöje kändisar {recency_suffix}".strip(),
+        )
+        elle.source_name = "elle_noje"
+        fetchers.append(elle)
     if config.enable_source_tiktok:
         tiktok = GoogleNewsFetcher(
             limit=config.reddit_limit,
@@ -680,6 +717,53 @@ def main() -> None:
 
     config = load_config()
     storage = Storage(config.db_path)
+    poll_lock = threading.Lock()
+
+    stale_refresh_seconds = int(
+        os.getenv(
+            "DASHBOARD_STALE_REFRESH_SECONDS",
+            str(max(config.poll_interval_seconds * 2, config.poll_interval_seconds + 60)),
+        )
+    )
+    on_demand_min_gap_seconds = int(
+        os.getenv(
+            "DASHBOARD_ON_DEMAND_MIN_GAP_SECONDS",
+            str(max(60, config.poll_interval_seconds)),
+        )
+    )
+
+    def run_poll_cycle(reason: str) -> int:
+        if not poll_lock.acquire(blocking=False):
+            if config.debug_mode:
+                log(f"debug skipped poll cycle ({reason}): already running")
+            return -1
+        try:
+            alerts = poll_once(config=config, storage=storage)
+            update_snapshot(storage, config)
+            storage.set_state("last_poll_completed_at", str(int(time.time())))
+            return alerts
+        finally:
+            poll_lock.release()
+
+    def on_demand_refresh(*, reason: str, market_scope: str | None = None, stale_age_seconds: int | None = None) -> bool:
+        # Called from dashboard API when data is stale after cold-start/sleep.
+        now = int(time.time())
+        last_poll = int(storage.get_state("last_poll_completed_at") or "0")
+        if last_poll and (now - last_poll) < stale_refresh_seconds:
+            return False
+        last_on_demand = int(storage.get_state("last_on_demand_refresh_at") or "0")
+        if last_on_demand and (now - last_on_demand) < on_demand_min_gap_seconds:
+            return False
+        alerts = run_poll_cycle(f"on_demand:{reason}:{market_scope or 'all'}")
+        if alerts < 0:
+            return False
+        storage.set_state("last_on_demand_refresh_at", str(int(time.time())))
+        log(
+            "dashboard on-demand refresh completed "
+            f"(reason={reason}, scope={market_scope or 'all'}, stale_age={stale_age_seconds or 0}s)"
+        )
+        return True
+
     notifier = DiscordNotifier(config.discord_webhook_url, config.reddit_timeout_seconds) if config.discord_webhook_url else None
     posts_notifier = None
     if config.discord_posts_webhook_url:
@@ -708,6 +792,10 @@ def main() -> None:
                     "dashboard_admin_password": os.getenv("DASHBOARD_ADMIN_PASSWORD", "").strip(),
                     "dashboard_start_password": os.getenv("DASHBOARD_START_PASSWORD", "").strip(),
                     "dashboard_pro_password": os.getenv("DASHBOARD_PRO_PASSWORD", "").strip(),
+                    "on_demand_refresh": on_demand_refresh,
+                    "stale_refresh_seconds": stale_refresh_seconds,
+                    "on_demand_wait_seconds": float(os.getenv("DASHBOARD_ON_DEMAND_WAIT_SECONDS", "8")),
+                    "on_demand_wait_poll_seconds": float(os.getenv("DASHBOARD_ON_DEMAND_WAIT_POLL_SECONDS", "0.4")),
                 },
             )
             dashboard.start()
@@ -727,8 +815,9 @@ def main() -> None:
         f"{len(config.topics)} topics, interval {config.poll_interval_seconds}s"
     )
     while True:
-        alerts_sent = poll_once(config=config, storage=storage)
-        update_snapshot(storage, config)
+        alerts_sent = run_poll_cycle("scheduled")
+        if alerts_sent < 0:
+            alerts_sent = 0
         now = int(time.time())
         if notifier and now - last_heartbeat_at >= config.heartbeat_interval_seconds:
             try:
