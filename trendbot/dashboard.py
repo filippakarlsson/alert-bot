@@ -2238,6 +2238,11 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     const THEME_KEY = 'trendbot_theme_v1';
     const BOOTSTRAP_SUMMARY = (BOOTSTRAP_DATA && BOOTSTRAP_DATA.summary) ? BOOTSTRAP_DATA.summary : null;
     const BOOTSTRAP_RECENT = (BOOTSTRAP_DATA && BOOTSTRAP_DATA.recent) ? BOOTSTRAP_DATA.recent : null;
+    const IS_SNAPSHOT_ONLY = Boolean(BOOTSTRAP_SUMMARY) && (
+      window.location.hostname === 'gratis.trendbot.se' ||
+      window.location.hostname.endsWith('.netlify.app') ||
+      window.location.pathname.startsWith('/gratisversion')
+    );
     function nowUtcSeconds() {
       return Math.floor(Date.now() / 1000);
     }
@@ -2778,6 +2783,12 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     }
     async function loadData() {
       if (loadInFlight) return;
+      if (IS_SNAPSHOT_ONLY && BOOTSTRAP_SUMMARY) {
+        renderPayload(BOOTSTRAP_SUMMARY, BOOTSTRAP_RECENT || { items: [] });
+        const latest = BOOTSTRAP_SUMMARY.latest_known_observed_at_human || BOOTSTRAP_SUMMARY.latest_observed_at_human || '';
+        setSyncStatus(latest ? `Snapshot • senast uppdaterad ${latest}` : 'Snapshot • senast uppdaterad');
+        return;
+      }
       loadInFlight = true;
       setSyncStatus('Synkar live-data...');
       try {
@@ -2812,6 +2823,12 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     }
     async function ensureAuth() {
       const overlay = document.getElementById('login-overlay');
+      if (IS_SNAPSHOT_ONLY) {
+        userRole = 'lite';
+        applyRoleUI();
+        overlay.style.display = 'none';
+        return true;
+      }
       try {
         const me = await fetchApiJson('/api/me');
         if (me && me.authenticated) {
@@ -3055,7 +3072,9 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       setSyncStatus('Visar publicerad snapshot...');
     }
     ensureAuth().then(() => loadData());
-    setInterval(loadData, 15000);
+    if (!IS_SNAPSHOT_ONLY) {
+      setInterval(loadData, 15000);
+    }
   </script>
 </body>
 </html>"""
