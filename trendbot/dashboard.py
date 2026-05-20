@@ -2265,7 +2265,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         return ['drama', 'skandal', 'bråk', 'chock', 'rasar', 'kritik', 'storm', 'konflikt'].some((x) => text.includes(x));
       }
       if (activeFilter === 'tv') {
-        return ['tv', 'serie', 'program', 'svt', 'tv4', 'idol', 'let\'s dance', 'masked singer', 'förrädarna', 'paradise hotel'].some((x) => text.includes(x));
+        return ['tv', 'serie', 'program', 'svt', 'tv4', 'idol', "let's dance", 'masked singer', 'förrädarna', 'paradise hotel'].some((x) => text.includes(x));
       }
       if (activeFilter === 'musik') {
         return ['musik', 'låt', 'album', 'k-pop', 'eurovision', 'melodifestivalen', 'artist', 'turné'].some((x) => text.includes(x));
