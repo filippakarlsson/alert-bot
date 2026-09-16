@@ -47,6 +47,63 @@ SOURCE_SCOPE: dict[str, str] = {
     "tiktok_web": "global",
 }
 
+SWEDISH_HINT_WORDS = {
+    "och",
+    "att",
+    "det",
+    "som",
+    "för",
+    "med",
+    "på",
+    "är",
+    "har",
+    "inte",
+    "från",
+    "efter",
+    "till",
+    "över",
+    "svensk",
+    "svenska",
+    "sverige",
+    "tv4",
+    "svt",
+    "aftonbladet",
+    "expressen",
+    "hänt",
+    "hant",
+    "nyheterna",
+    "kändis",
+    "kändisar",
+    "nöje",
+    "melodifestivalen",
+    "förrädarna",
+}
+
+ENGLISH_HINT_WORDS = {
+    "the",
+    "and",
+    "with",
+    "from",
+    "after",
+    "this",
+    "that",
+    "what",
+    "when",
+    "watch",
+    "live",
+    "today",
+    "tonight",
+    "new",
+    "series",
+    "movie",
+    "music",
+    "report",
+    "how",
+    "why",
+    "your",
+    "best",
+}
+
 
 def log(message: str) -> None:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -63,6 +120,24 @@ def _looks_like_previous_year_story(text: str, current_year: int) -> bool:
     if not years:
         return False
     return max(years) < current_year
+
+
+def _is_probably_swedish_text(text: str) -> bool:
+    lowered = (text or "").lower()
+    if not lowered.strip():
+        return False
+    if any(ch in lowered for ch in ("å", "ä", "ö")):
+        return True
+    tokens = re.findall(r"[a-zA-ZåäöÅÄÖ0-9']+", lowered)
+    if not tokens:
+        return False
+    sw_hits = sum(1 for tok in tokens if tok in SWEDISH_HINT_WORDS)
+    en_hits = sum(1 for tok in tokens if tok in ENGLISH_HINT_WORDS)
+    if sw_hits >= 2:
+        return True
+    if sw_hits >= 1 and en_hits == 0:
+        return True
+    return False
 
 
 def _topic_thresholds(topic: str, config):
@@ -442,6 +517,9 @@ def poll_once(config=None, storage=None) -> int:
                     continue
                 if _contains_blocked_term(f"{post.title} {post.url}", config.blocked_terms):
                     continue
+                if config.swedish_only_mode and SOURCE_SCOPE.get(fetcher.source_name, "global") == "sweden":
+                    if not _is_probably_swedish_text(f"{post.title} {post.summary}"):
+                        continue
                 filtered_posts.append(post)
                 if not storage.has_seen_item(fetcher.source_name, topic, post.id):
                     new_posts.append(post)
@@ -698,6 +776,8 @@ def update_snapshot(storage: Storage, config) -> None:
                 "alert_count_offset": config.alert_count_offset,
                 "blocked_terms": config.blocked_terms,
                 "swedish_only_mode": config.swedish_only_mode,
+                "max_item_age_hours": config.max_item_age_hours,
+                "quality_min_specificity_score": int(os.getenv("QUALITY_MIN_SPECIFICITY_SCORE", "9")),
                 "optional_tracking_enabled": os.getenv("DASHBOARD_OPTIONAL_TRACKING", "0").strip().lower() in {"1", "true", "yes", "on"},
                 "dashboard_admin_password": os.getenv("DASHBOARD_ADMIN_PASSWORD", "").strip(),
                 "dashboard_start_password": os.getenv("DASHBOARD_START_PASSWORD", "").strip(),
@@ -793,6 +873,8 @@ def main() -> None:
                     "alert_count_offset": config.alert_count_offset,
                     "blocked_terms": config.blocked_terms,
                     "swedish_only_mode": config.swedish_only_mode,
+                    "max_item_age_hours": config.max_item_age_hours,
+                    "quality_min_specificity_score": int(os.getenv("QUALITY_MIN_SPECIFICITY_SCORE", "9")),
                     "optional_tracking_enabled": os.getenv("DASHBOARD_OPTIONAL_TRACKING", "0").strip().lower() in {"1", "true", "yes", "on"},
                     "dashboard_admin_password": os.getenv("DASHBOARD_ADMIN_PASSWORD", "").strip(),
                     "dashboard_start_password": os.getenv("DASHBOARD_START_PASSWORD", "").strip(),

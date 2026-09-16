@@ -243,6 +243,128 @@ def _format_ts(value: int) -> str:
     return datetime.fromtimestamp(value, tz=timezone.utc).astimezone(stockholm).strftime("%Y-%m-%d %H:%M %Z")
 
 
+SWEDISH_TEXT_HINTS = {
+    "och",
+    "att",
+    "det",
+    "som",
+    "för",
+    "med",
+    "på",
+    "är",
+    "har",
+    "inte",
+    "efter",
+    "från",
+    "svensk",
+    "svenska",
+    "sverige",
+    "nyheterna",
+    "nöje",
+    "kändis",
+    "kändisar",
+    "hänt",
+    "hant",
+    "förrädarna",
+    "melodifestivalen",
+}
+
+ENGLISH_TEXT_HINTS = {
+    "the",
+    "and",
+    "with",
+    "from",
+    "after",
+    "this",
+    "that",
+    "what",
+    "when",
+    "watch",
+    "live",
+    "today",
+    "tonight",
+    "new",
+    "series",
+    "movie",
+    "music",
+    "report",
+    "how",
+    "why",
+}
+
+SWEDISH_TRUSTED_SOURCE_MARKERS = {
+    "aftonbladet",
+    "expressen",
+    "svt",
+    "tv4",
+    "nyheterna",
+    "sveriges radio",
+    "omni",
+    "dn",
+    "dagens nyheter",
+    "gp",
+    "hant",
+    "hänt",
+    "svensk damtidning",
+    "svenskdamtidning",
+    "nyheter24",
+    "se och hör",
+    "seochhor",
+    "allas",
+    "elle",
+    "moviezine",
+    "flm.nu",
+    "tv4 play",
+    "tiktok",
+}
+
+LOW_SIGNAL_TERMS = {
+    "anteckningar",
+    "np svenska",
+    "provfrågor",
+    "flashcards",
+    "quizlet",
+    "läxhjälp",
+    "arbetsblad",
+    "lektion",
+    "school notes",
+}
+
+
+def _looks_swedish_text(text: str) -> bool:
+    lowered = (text or "").lower()
+    if not lowered.strip():
+        return False
+    if any(ch in lowered for ch in ("å", "ä", "ö")):
+        return True
+    tokens = re.findall(r"[a-zA-ZåäöÅÄÖ0-9']+", lowered)
+    if not tokens:
+        return False
+    sw_hits = sum(1 for token in tokens if token in SWEDISH_TEXT_HINTS)
+    en_hits = sum(1 for token in tokens if token in ENGLISH_TEXT_HINTS)
+    if sw_hits >= 2:
+        return True
+    if sw_hits >= 1 and en_hits == 0:
+        return True
+    return False
+
+
+def _looks_english_text(text: str) -> bool:
+    lowered = (text or "").lower()
+    if not lowered.strip():
+        return False
+    tokens = re.findall(r"[a-zA-ZåäöÅÄÖ0-9']+", lowered)
+    if not tokens:
+        return False
+    en_hits = sum(1 for token in tokens if token in ENGLISH_TEXT_HINTS)
+    sw_hits = sum(1 for token in tokens if token in SWEDISH_TEXT_HINTS)
+    if en_hits >= 3 and sw_hits == 0:
+        return True
+    if en_hits >= 2 and sw_hits == 0 and not any(ch in lowered for ch in ("å", "ä", "ö")):
+        return True
+    return False
+
+
 GENERIC_SERIES_LABELS = {
     "news",
     "music",
@@ -319,11 +441,71 @@ def _clean_example_title(title: str) -> str:
         cleaned = cleaned.split("|", 1)[0].strip()
     if ":" in cleaned:
         prefix, suffix = cleaned.split(":", 1)
-        if len(prefix.strip()) <= 18 and suffix.strip():
+        prefix = prefix.strip()
+        suffix = suffix.strip()
+        # Keep Swedish genitive forms like "SVT:s" intact.
+        looks_like_genitive_prefix = bool(
+            re.fullmatch(r"[A-ZÅÄÖ]{2,6}", prefix) and suffix.lower().startswith("s ")
+        )
+        if len(prefix) <= 18 and suffix and not looks_like_genitive_prefix:
             cleaned = suffix.strip()
     cleaned = _strip_leading_news_phrase(cleaned)
+    cleaned = re.sub(r"https?://\S+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"#\w+", "", cleaned)
+    cleaned = re.sub(
+        r"\b(se hela|läs mer|link in bio|länk i profilen|klicka här)\b.*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
+
+
+def _compact_display_label(text: str, max_words: int = 11) -> str:
+    value = _clean_example_title(text)
+    if not value:
+        return ""
+    value = re.sub(r"[🗣️📲🔥✨✅❌👉➡️▪️🔹]+", " ", value)
+    value = re.sub(r"[\"“”‘’]", "", value)
+    value = re.sub(r"\s+", " ", value).strip(" -–—:;,.")
+    parts = [part.strip() for part in re.split(r"[.!?•|]+", value) if part.strip()]
+    if parts:
+        # Pick the first informative clause.
+        informative = next((part for part in parts if len(part.split()) >= 4), parts[0])
+        value = informative
+    if ":" in value and len(value.split()) > 9:
+        left, right = [part.strip() for part in value.split(":", 1)]
+        if 4 <= len(left.split()) <= 11:
+            value = left
+        elif len(right.split()) >= 4:
+            value = right
+    words = value.split()
+    if len(words) > max_words:
+        value = " ".join(words[:max_words]).rstrip(" -–—:;,") + "…"
+    value = value.strip(" \"'")
+    return value
+
+
+def _publisher_tail(title: str) -> str:
+    raw = (title or "").strip()
+    if not raw:
+        return ""
+    parts = [part.strip() for part in re.split(r"\s[-–—]\s", raw) if part.strip()]
+    if not parts:
+        return ""
+    return parts[-1].lower()
+
+
+def _looks_trusted_swedish_source(example_title: str) -> bool:
+    tail = _publisher_tail(example_title)
+    if not tail:
+        return False
+    if ".se" in tail:
+        return True
+    if ".nu" in tail:
+        return True
+    return any(marker in tail for marker in SWEDISH_TRUSTED_SOURCE_MARKERS)
 
 
 def _looks_dateish(text: str) -> bool:
@@ -444,8 +626,12 @@ def _is_vague_label(text: str) -> bool:
         "mer detaljer väntas",
         "utveckling pågår",
         "rubrik saknar kontext",
+        "håller du med experten",
+        "vad tycker du",
     }
     if value in vague_phrases:
+        return True
+    if value.startswith(("håller du med", "vad tycker du", "se hela", "läs mer")):
         return True
     return len(value.split()) <= 2 and any(word in value for word in ("kvar", "oklart", "pågår"))
 
@@ -516,13 +702,24 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
             "sverige", "svensk", "uppsala", "stockholm", "göteborg", "malmö",
             "mello", "melodifestivalen",
         )
-        if any(marker in text for marker in swedish_markers):
+        has_marker = any(marker in text for marker in swedish_markers)
+        if has_marker:
+            return True
+        if _looks_swedish_text(text) and not _looks_english_text(text):
             return True
         # Heuristic: Swedish chars usually indicate Swedish-local headline context.
         return any(ch in text for ch in ("å", "ä", "ö"))
 
     now = int(datetime.now(tz=timezone.utc).timestamp())
     min_daily_mentions = int(settings.get("daily_top_min_mentions", 3))
+    max_item_age_hours = max(6, int(settings.get("max_item_age_hours", 72)))
+    stale_story_cutoff = now - (max_item_age_hours * 3600)
+    quality_min_specificity_score = int(settings.get("quality_min_specificity_score", 9))
+
+    def _story_timestamp(row: Any) -> int:
+        latest_published = int(getattr(row, "latest_published_at", 0) or 0)
+        latest_observed = int(getattr(row, "latest_observed_at", 0) or 0)
+        return latest_published if latest_published > 0 else latest_observed
 
     def _apply_scope(rows):
         if market_scope == "global":
@@ -539,6 +736,49 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
             ]
         return rows
 
+    def _row_has_quality(row: Any) -> bool:
+        if _story_timestamp(row) < stale_story_cutoff:
+            return False
+        cleaned_example = _clean_example_title(getattr(row, "example_title", "") or "")
+        if not cleaned_example:
+            return False
+        combined_text = " ".join(
+            (
+                _strip_leading_news_phrase(getattr(row, "topic", "") or ""),
+                _strip_leading_news_phrase(getattr(row, "cluster_label", "") or ""),
+                cleaned_example,
+            )
+        ).lower()
+        if any(term in combined_text for term in LOW_SIGNAL_TERMS):
+            return False
+        if _is_source_only_label(cleaned_example):
+            return False
+        if _is_vague_label(cleaned_example):
+            return False
+        if market_scope == "sweden" and not _looks_trusted_swedish_source(getattr(row, "example_title", "") or ""):
+            return False
+        candidates = [
+            _strip_leading_news_phrase(getattr(row, "cluster_label", "") or ""),
+            _strip_leading_news_phrase(getattr(row, "topic", "") or ""),
+            cleaned_example,
+        ]
+        best_score = -1
+        for candidate in candidates:
+            if not candidate:
+                continue
+            if _is_vague_label(candidate):
+                continue
+            if not _is_context_label(candidate):
+                continue
+            best_score = max(best_score, _label_specificity_score(candidate))
+        if best_score < quality_min_specificity_score:
+            return False
+        if market_scope == "sweden":
+            sample_text = " ".join(candidates)
+            if _looks_english_text(sample_text) and not _looks_swedish_text(sample_text):
+                return False
+        return True
+
     def _topics_for_window(window_seconds: int, limit: int, min_total_mentions: int):
         rows = storage.top_topics_since(
             now - window_seconds,
@@ -551,7 +791,8 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
             for row in rows
             if not _is_blocked(row.topic, row.cluster_label, row.example_title)
         ]
-        return _apply_scope(rows)
+        rows = _apply_scope(rows)
+        return [row for row in rows if _row_has_quality(row)]
 
     def _clusters_for_window(window_seconds: int, limit: int):
         rows = storage.top_clusters_since(now - window_seconds, limit, market_scope=market_scope)
@@ -560,7 +801,7 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
             rows = [row for row in rows if not _is_swedish_story(row.cluster_label, row.example_title)]
         elif market_scope == "sweden":
             rows = [row for row in rows if _is_swedish_story(row.cluster_label, row.example_title)]
-        return rows
+        return [row for row in rows if _row_has_quality(row)]
 
     top_topic_candidates = _topics_for_window(86400, 80, min_daily_mentions)
     hot_topics = _topics_for_window(3600, 40, 1)[:10]
@@ -753,19 +994,23 @@ def _summary_payload(storage: Storage, settings: dict[str, Any], market_scope: s
                 valid_candidates.append(expanded)
 
         if valid_candidates:
-            return max(valid_candidates, key=_label_specificity_score)
+            best = max(valid_candidates, key=_label_specificity_score)
+            return _compact_display_label(best) or best
 
         if _is_context_label(base):
-            return base
+            compact = _compact_display_label(base)
+            return compact or base
         expanded_base = _expand_with_example_context(base or "", fallback_example)
         if _is_context_label(expanded_base):
-            return expanded_base
+            compact = _compact_display_label(expanded_base)
+            return compact or expanded_base
         # Last-resort fallback: clean something human-readable instead of generic placeholder text.
         fallback = _clean_example_title(fallback_example) or _strip_leading_news_phrase(fallback_topic or "")
         if not fallback:
             fallback = re.sub(r"^cluster:\s*", "", cluster_key or "", flags=re.IGNORECASE).replace("_", " ").strip()
         fallback = re.sub(r"\s+", " ", fallback).strip(" -–—:")
-        return fallback or "Oklart ämne"
+        compact = _compact_display_label(fallback)
+        return compact or fallback or "Oklart ämne"
 
     latest_known_observed_at = 0
     if top_topics:
@@ -1373,7 +1618,16 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     body.theme-light .sync-status { color: #94a3b8; }
     body.theme-light .sync-status.error { color: #f59e0b; }
     main { padding: 0 24px 32px; display: grid; gap: 18px; }
-    .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+    .grid {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      align-items: start;
+    }
+    .grid > .card {
+      align-self: start;
+      height: fit-content;
+    }
     .grid.wide { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
     .card {
       background: var(--panel);
@@ -1387,6 +1641,17 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       background: rgba(15, 23, 42, 0.82);
       border: 1px solid rgba(148, 163, 184, 0.18);
       box-shadow: 0 20px 60px rgba(0,0,0,.25);
+    }
+    .card.compact-empty {
+      padding: 14px 16px;
+      max-height: 132px;
+      overflow: hidden;
+    }
+    .card.compact-empty h2 {
+      margin-bottom: 8px;
+    }
+    .card.compact-empty .chart {
+      min-height: 0;
     }
     ol, ul { margin: 0; padding-left: 20px; }
     li { margin: 8px 0; }
@@ -1843,6 +2108,11 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
         <h2>Topic Clusters <span class="pill">clustered stories</span></h2>
         <ul id="clusters"><li class="muted">Loading...</li></ul>
       </section>
+      <section class="card">
+        <h2>Liknande ämnen <span class="pill">upptäck fler vinklar</span></h2>
+        <p id="related-anchor" class="muted">Laddar relaterade ämnen...</p>
+        <ul id="related-topics"><li class="muted">Loading...</li></ul>
+      </section>
       <section class="card" data-min-role="pro">
         <h2>Vad Folk Tycker <span class="pill">känsla per ämne</span></h2>
         <ul id="reactions"><li class="muted">Loading...</li></ul>
@@ -2236,12 +2506,19 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     let loadInFlight = false;
     const WATCHLIST_KEY = 'trendbot_watchlist_v1';
     const THEME_KEY = 'trendbot_theme_v1';
+    const RELATED_STOPWORDS = new Set([
+      'och', 'att', 'det', 'som', 'med', 'för', 'den', 'detta', 'från', 'till', 'har', 'ska', 'efter',
+      'om', 'eller', 'utan', 'över', 'under', 'mot', 'hos', 'på', 'i', 'av', 'en', 'ett', 'de', 'vi',
+      'ni', 'jag', 'han', 'hon', 'their', 'the', 'a', 'an', 'of', 'in', 'to', 'for', 'and', 'is', 'are'
+    ]);
     const BOOTSTRAP_SUMMARY = (BOOTSTRAP_DATA && BOOTSTRAP_DATA.summary) ? BOOTSTRAP_DATA.summary : null;
     const BOOTSTRAP_RECENT = (BOOTSTRAP_DATA && BOOTSTRAP_DATA.recent) ? BOOTSTRAP_DATA.recent : null;
     const IS_SNAPSHOT_ONLY = Boolean(BOOTSTRAP_SUMMARY) && (
+      window.location.protocol === 'file:' ||
       window.location.hostname === 'gratis.trendbot.se' ||
       window.location.hostname.endsWith('.netlify.app') ||
-      window.location.pathname.startsWith('/gratisversion')
+      window.location.pathname.startsWith('/gratisversion') ||
+      window.location.pathname.includes('/gratisversion/')
     );
     function nowUtcSeconds() {
       return Math.floor(Date.now() / 1000);
@@ -2254,6 +2531,13 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       if (!el) return;
       el.textContent = message;
       el.classList.toggle('error', Boolean(isError));
+    }
+    function setCardCompactByElementId(elementId, compact) {
+      const el = document.getElementById(elementId);
+      if (!el) return;
+      const card = el.closest('.card');
+      if (!card) return;
+      card.classList.toggle('compact-empty', Boolean(compact));
     }
     function matchesFilter(item) {
       if (!item) return false;
@@ -2278,6 +2562,9 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     }
     function filtered(items) {
       return (items || []).filter((item) => matchesFilter(item) && withinWindow(item));
+    }
+    function filteredIgnoringWindow(items) {
+      return (items || []).filter((item) => matchesFilter(item));
     }
     function applyScopeButtons() {
       const se = document.getElementById('scope-sweden');
@@ -2338,6 +2625,8 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       }
       const logoutBtn = document.getElementById('logout-btn');
       if (logoutBtn) logoutBtn.textContent = userRole === 'lite' ? 'Logga in' : 'Logga ut';
+      const navTopic = document.getElementById('nav-topic');
+      if (navTopic) navTopic.style.display = userRole === 'lite' ? 'none' : '';
       document.querySelectorAll('[data-min-role]').forEach((el) => {
         const required = (el.getAttribute('data-min-role') || 'start').toLowerCase();
         const canSee = (ROLE_RANK[userRole] || 0) >= (ROLE_RANK[required] || 0);
@@ -2363,6 +2652,49 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
     }
     function topicLink(item) {
       return `?view=topic&key=${encodeURIComponent(item.cluster_key || '')}`;
+    }
+    function tokenizeTopic(text) {
+      const words = (text || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9åäö\s]/gi, ' ')
+        .split(/\s+/)
+        .filter((w) => w && w.length >= 3 && !RELATED_STOPWORDS.has(w));
+      return Array.from(new Set(words));
+    }
+    function relatedTopics(selected, allItems) {
+      const selectedTokens = tokenizeTopic(`${selected.topic || ''} ${selected.example_title || ''}`);
+      const selectedSet = new Set(selectedTokens);
+      const now = nowUtcSeconds();
+      const list = [];
+      for (const item of allItems) {
+        if (!item || item.cluster_key === selected.cluster_key) continue;
+        const itemTokens = tokenizeTopic(`${item.topic || ''} ${item.example_title || ''}`);
+        const overlap = itemTokens.filter((t) => selectedSet.has(t)).length;
+        let score = 0;
+        if ((item.category || 'default') === (selected.category || 'default')) score += 5;
+        score += Math.min(overlap * 2, 8);
+        if ((item.latest_observed_at || 0) >= (now - 7200)) score += 2;
+        else if ((item.latest_observed_at || 0) >= (now - 21600)) score += 1;
+        if ((item.source_count || 0) >= 2) score += 1;
+        if ((item.trend_score || 0) >= 70) score += 1;
+        if (score <= 0) continue;
+        list.push({ ...item, related_score: score });
+      }
+      list.sort((a, b) =>
+        (b.related_score - a.related_score) ||
+        ((b.trend_score || 0) - (a.trend_score || 0)) ||
+        ((b.total_mentions || 0) - (a.total_mentions || 0))
+      );
+      const seen = new Set();
+      const deduped = [];
+      for (const item of list) {
+        const key = item.cluster_key || `${item.topic}-${item.category}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(item);
+        if (deduped.length >= 5) break;
+      }
+      return deduped;
     }
     function canOpenTopic() {
       return (ROLE_RANK[userRole] || 0) >= (ROLE_RANK.start || 1);
@@ -2419,16 +2751,29 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       const moreBtn = document.getElementById('top10-more');
       const focusEl = document.getElementById('top10-focus');
       const listEl = document.getElementById('top10');
-      const allItems = filtered(summary.top_topics || []);
+      let stableItems = filtered(summary.top_topics || []);
+      let hotFallbackItems = filtered(summary.hot_topics || []);
+      // A published free snapshot can be older than the selected live window.
+      // Keep its latest ranked stories visible rather than showing a false empty state.
+      const usingSnapshotFallback = IS_SNAPSHOT_ONLY && !stableItems.length &&
+        filteredIgnoringWindow(summary.top_topics || []).length > 0;
+      if (usingSnapshotFallback) {
+        stableItems = filteredIgnoringWindow(summary.top_topics || []);
+        hotFallbackItems = filteredIgnoringWindow(summary.hot_topics || []);
+      }
+      const usingHotFallback = !stableItems.length && hotFallbackItems.length > 0;
+      const allItems = usingHotFallback ? hotFallbackItems : stableItems;
 
       if (!allItems.length) {
         selectEl.innerHTML = '<option>No topics yet</option>';
         selectEl.disabled = true;
         moreBtn.style.display = 'none';
-        focusEl.textContent = 'No stable topics yet.';
+        focusEl.textContent = 'Inga stabila ämnen ännu.';
         listEl.innerHTML = '<li class="muted">No data yet.</li>';
+        setCardCompactByElementId('top10', true);
         return;
       }
+      setCardCompactByElementId('top10', false);
 
       const visibleItems = top10ShowAll ? allItems : allItems.slice(0, 5);
       if (!top10SelectedKey || !visibleItems.some((item) => item.cluster_key === top10SelectedKey)) {
@@ -2449,11 +2794,13 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       if ((summary.data_mode || '').startsWith('fallback_')) {
         freshnessNote = ` • showing latest known snapshot (${escapeHtml(summary.latest_known_observed_at_human || 'older data')})`;
       }
-      focusEl.innerHTML = `
-        <strong>${escapeHtml(selected.topic)}</strong>
-        <span class="source">${selected.category}</span>
-        • ${selected.total_mentions} mentions • score ${selected.trend_score.toFixed(1)} / 100${freshnessNote}
-      `;
+      if (usingSnapshotFallback) {
+        freshnessNote += ' • visar senast publicerade snapshot';
+      }
+      const selectedScore = Number(selected.trend_score || 0);
+      focusEl.innerHTML = usingHotFallback
+        ? `<strong>${escapeHtml(selected.topic)}</strong> <span class="source">${selected.category}</span> • ${selected.total_mentions} mentions • score ${selectedScore.toFixed(1)} / 100 • visar hot fallback${freshnessNote}`
+        : `<strong>${escapeHtml(selected.topic)}</strong> <span class="source">${selected.category}</span> • ${selected.total_mentions} mentions • score ${selectedScore.toFixed(1)} / 100${freshnessNote}`;
 
       listEl.innerHTML = visibleItems.map((item) => `
         <li>
@@ -2470,12 +2817,46 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
           </div>
           <div class="muted">${item.total_mentions} mentions across ${item.samples} samples • ${item.source_count} källor med träff • seen ${item.latest_observed_at_human} • published ${item.latest_published_at_human || '-'}</div>
           ${chipsHtml(item)}
-          <div class="muted">Cluster: ${escapeHtml(item.cluster_label || item.topic)}</div>
           <div class="muted">Trend score: ${item.trend_score.toFixed(1)} / 100</div>
           ${item.example_title ? `<div class="muted">About: ${escapeHtml(item.example_title)}</div>` : ''}
           <div class="muted"><a href="${item.link}" target="_blank" rel="noreferrer">Open topic link</a></div>
         </li>
       `).join('');
+    }
+    function renderDashboardRelated(summary) {
+      const anchorEl = document.getElementById('related-anchor');
+      const listEl = document.getElementById('related-topics');
+      if (!anchorEl || !listEl) return;
+      const topItems = filtered(summary.top_topics || []);
+      const hotItems = filtered(summary.hot_topics || []);
+      const anchor = hotItems[0] || topItems[0];
+      if (!anchor) {
+        anchorEl.textContent = 'Inga ämnen att jämföra just nu.';
+        listEl.innerHTML = '<li class="muted">Inga relaterade ämnen ännu.</li>';
+        setCardCompactByElementId('related-topics', true);
+        return;
+      }
+      anchorEl.textContent = `Utgår från: ${anchor.topic}`;
+      const pool = [...hotItems, ...topItems];
+      const related = relatedTopics(anchor, pool);
+      listEl.innerHTML = related.length
+        ? related.map((item) => `
+          <li>
+            <div class="row">
+              <div>
+                <span class="badge" style="background:${colorFor(item.category)}"></span>
+                <span class="topic">${escapeHtml(item.topic)}</span>
+                <span class="source">${item.category}</span>
+              </div>
+              <div>
+                <a class="secondary-btn" href="https://www.google.com/search?q=${encodeURIComponent(item.topic || '')}" target="_blank" rel="noreferrer">Sök</a>
+              </div>
+            </div>
+            <div class="muted">${item.total_mentions || 0} mentions • ${item.source_count || 0} källor • match ${item.related_score}</div>
+          </li>
+        `).join('')
+        : '<li class="muted">Inga tydligt relaterade ämnen just nu.</li>';
+      setCardCompactByElementId('related-topics', related.length === 0);
     }
     function onElement(id, eventName, handler) {
       const el = document.getElementById(id);
@@ -2633,6 +3014,25 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
       document.getElementById('post-studio').innerHTML = postStudioHtml(selected);
       loadTopicBrief(selected);
       document.getElementById('topic-media-links').innerHTML = mediaSources(selected.topic).map((x) => `<a class="chip" href="${x.url}" target="_blank" rel="noreferrer">${escapeHtml(x.label)}</a>`).join('');
+      const relatedPool = filtered([...(summary.top_topics || []), ...(summary.hot_topics || [])]);
+      const related = relatedTopics(selected, relatedPool);
+      document.getElementById('topic-related').innerHTML = related.length
+        ? related.map((item) => `
+          <li>
+            <div class="row">
+              <div>
+                <span class="badge" style="background:${colorFor(item.category)}"></span>
+                <span class="topic">${escapeHtml(item.topic)}</span>
+                <span class="source">${item.category}</span>
+              </div>
+              <div>
+                ${canOpenTopic() ? `<a class="secondary-btn" href="${topicLink(item)}">Öppna</a>` : ''}
+              </div>
+            </div>
+            <div class="muted">${item.total_mentions || 0} mentions • ${item.source_count || 0} källor • match ${item.related_score}</div>
+          </li>
+        `).join('')
+        : '<li class="muted">Inga tydligt relaterade ämnen just nu.</li>';
       updateWatchlistButton();
     }
     function normalizePayload(summary, recent) {
@@ -2678,9 +3078,12 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
           ${item.example_title ? `<div class="muted">${escapeHtml(item.example_title)}</div>` : ''}
         </li>
       `).join('') || '<li class="muted">No hot mentions yet.</li>';
+      setCardCompactByElementId('hot-topics', hotItems.length === 0);
+      renderDashboardRelated(safeSummary);
 
-      const maxCategory = Math.max(...safeSummary.category_movers.map((item) => item.total_mentions || 0), 1);
-      document.getElementById('categories').innerHTML = safeSummary.category_movers.map((item) => `
+      const categoryItems = safeSummary.category_movers || [];
+      const maxCategory = Math.max(...categoryItems.map((item) => item.total_mentions || 0), 1);
+      document.getElementById('categories').innerHTML = categoryItems.map((item) => `
         <div class="metric">
           <div style="min-width: 110px;">
             <span class="badge" style="background:${colorFor(item.category)}"></span>
@@ -2693,8 +3096,10 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
           <div class="score">${item.total_mentions}</div>
         </div>
       `).join('') || '<div class="muted">No category data yet.</div>';
+      setCardCompactByElementId('categories', categoryItems.length === 0);
 
-      document.getElementById('clusters').innerHTML = safeSummary.top_clusters.map((item) => `
+      const clusterItems = safeSummary.top_clusters || [];
+      document.getElementById('clusters').innerHTML = clusterItems.map((item) => `
         <li>
           <div class="row">
             <div>
@@ -2707,8 +3112,10 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
           <div class="muted">${item.total_mentions} mentions • ${item.topic_count} topics • ${item.samples} samples • score ${item.trend_score.toFixed(1)} / 100</div>
         </li>
       `).join('') || '<li class="muted">No clusters yet.</li>';
+      setCardCompactByElementId('clusters', clusterItems.length === 0);
 
-      document.getElementById('reactions').innerHTML = filtered(safeSummary.reaction_topics || []).map((item) => {
+      const reactionItems = filtered(safeSummary.reaction_topics || []);
+      document.getElementById('reactions').innerHTML = reactionItems.map((item) => {
         const moodColor = item.sentiment_score > 10 ? '#22c55e' : (item.sentiment_score < -10 ? '#ef4444' : '#f59e0b');
         const topicLabel = item.display_topic || item.topic;
         return `
@@ -2726,10 +3133,16 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
           </li>
         `;
       }).join('') || '<li class="muted">No reaction data yet.</li>';
+      setCardCompactByElementId('reactions', reactionItems.length === 0);
 
+      const hasFeaturedSeries = Array.isArray(safeSummary.featured_series) && safeSummary.featured_series.length > 0;
       document.getElementById('featured-chart').innerHTML = lineChart(safeSummary.featured_series, '#f59e0b');
+      setCardCompactByElementId('featured-chart', !hasFeaturedSeries);
       document.getElementById('featured-label').textContent = safeSummary.featured_label || 'No featured series yet.';
-      document.getElementById('cluster-chart').innerHTML = multiLineChart(safeSummary.cluster_multi_series || []);
+      const multiSeries = safeSummary.cluster_multi_series || [];
+      const hasClusterSeries = multiSeries.some((item) => Array.isArray(item.series) && item.series.length > 0);
+      document.getElementById('cluster-chart').innerHTML = multiLineChart(multiSeries);
+      setCardCompactByElementId('cluster-chart', !hasClusterSeries);
       document.getElementById('cluster-label').textContent = (safeSummary.cluster_multi_series && safeSummary.cluster_multi_series.length)
         ? 'Top 5 clusters (last 6h, local time)'
         : (safeSummary.cluster_label || 'No cluster series yet.');
@@ -2777,6 +3190,7 @@ def _render_index(bootstrap_data: dict[str, Any] | None = None) -> str:
           <div class="muted">${item.observed_at_human} • new/fetched</div>
         </li>
       `).join('') || '<li class="muted">No data yet.</li>';
+      setCardCompactByElementId('recent', safeRecent.items.length === 0);
       renderWatchlist();
       applyViewMode(safeSummary);
       const lastKnown = safeSummary.latest_known_observed_at_human || safeSummary.latest_observed_at_human || '';

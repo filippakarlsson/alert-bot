@@ -973,9 +973,11 @@
     const BOOTSTRAP_SUMMARY = (BOOTSTRAP_DATA && BOOTSTRAP_DATA.summary) ? BOOTSTRAP_DATA.summary : null;
     const BOOTSTRAP_RECENT = (BOOTSTRAP_DATA && BOOTSTRAP_DATA.recent) ? BOOTSTRAP_DATA.recent : null;
     const IS_SNAPSHOT_ONLY = Boolean(BOOTSTRAP_SUMMARY) && (
+      window.location.protocol === 'file:' ||
       window.location.hostname === 'gratis.trendbot.se' ||
       window.location.hostname.endsWith('.netlify.app') ||
-      window.location.pathname.startsWith('/gratisversion')
+      window.location.pathname.startsWith('/gratisversion') ||
+      window.location.pathname.includes('/gratisversion/')
     );
     function nowUtcSeconds() {
       return Math.floor(Date.now() / 1000);
@@ -1012,6 +1014,9 @@
     }
     function filtered(items) {
       return (items || []).filter((item) => matchesFilter(item) && withinWindow(item));
+    }
+    function filteredIgnoringWindow(items) {
+      return (items || []).filter((item) => matchesFilter(item));
     }
     function applyScopeButtons() {
       const se = document.getElementById('scope-sweden');
@@ -1153,13 +1158,24 @@
       const moreBtn = document.getElementById('top10-more');
       const focusEl = document.getElementById('top10-focus');
       const listEl = document.getElementById('top10');
-      const allItems = filtered(summary.top_topics || []);
+      let stableItems = filtered(summary.top_topics || []);
+      let hotFallbackItems = filtered(summary.hot_topics || []);
+      // A published free snapshot can be older than the selected live window.
+      // Keep its latest ranked stories visible rather than showing a false empty state.
+      const usingSnapshotFallback = IS_SNAPSHOT_ONLY && !stableItems.length &&
+        filteredIgnoringWindow(summary.top_topics || []).length > 0;
+      if (usingSnapshotFallback) {
+        stableItems = filteredIgnoringWindow(summary.top_topics || []);
+        hotFallbackItems = filteredIgnoringWindow(summary.hot_topics || []);
+      }
+      const usingHotFallback = !stableItems.length && hotFallbackItems.length > 0;
+      const allItems = usingHotFallback ? hotFallbackItems : stableItems;
 
       if (!allItems.length) {
         selectEl.innerHTML = '<option>No topics yet</option>';
         selectEl.disabled = true;
         moreBtn.style.display = 'none';
-        focusEl.textContent = 'No stable topics yet.';
+        focusEl.textContent = 'Inga stabila ämnen ännu.';
         listEl.innerHTML = '<li class="muted">No data yet.</li>';
         return;
       }
@@ -1183,11 +1199,13 @@
       if ((summary.data_mode || '').startsWith('fallback_')) {
         freshnessNote = ` • showing latest known snapshot (${escapeHtml(summary.latest_known_observed_at_human || 'older data')})`;
       }
-      focusEl.innerHTML = `
-        <strong>${escapeHtml(selected.topic)}</strong>
-        <span class="source">${selected.category}</span>
-        • ${selected.total_mentions} mentions • score ${selected.trend_score.toFixed(1)} / 100${freshnessNote}
-      `;
+      if (usingSnapshotFallback) {
+        freshnessNote += ' • visar senast publicerade snapshot';
+      }
+      const selectedScore = Number(selected.trend_score || 0);
+      focusEl.innerHTML = usingHotFallback
+        ? `<strong>${escapeHtml(selected.topic)}</strong> <span class="source">${selected.category}</span> • ${selected.total_mentions} mentions • score ${selectedScore.toFixed(1)} / 100 • visar hot fallback${freshnessNote}`
+        : `<strong>${escapeHtml(selected.topic)}</strong> <span class="source">${selected.category}</span> • ${selected.total_mentions} mentions • score ${selectedScore.toFixed(1)} / 100${freshnessNote}`;
 
       listEl.innerHTML = visibleItems.map((item) => `
         <li>
